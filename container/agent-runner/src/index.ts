@@ -517,6 +517,16 @@ async function main(): Promise<void> {
   let resumeAt: string | undefined;
   try {
     while (true) {
+      // Apply any pending session reset before starting the next query.
+      // This ensures /new-session takes effect even when the container is
+      // idle-waiting or was mid-query when the reset message arrived.
+      if (pendingReset) {
+        log('Applying pending reset: clearing sessionId and resumeAt for new session');
+        sessionId = undefined;
+        resumeAt = undefined;
+        pendingReset = false;
+      }
+
       log(`Starting query (session: ${sessionId || 'new'}, resumeAt: ${resumeAt || 'latest'})...`);
 
       const queryResult = await runQuery(prompt, sessionId, mcpServerPath, containerInput, sdkEnv, resumeAt);
@@ -545,16 +555,6 @@ async function main(): Promise<void> {
       if (nextMessage === null) {
         log('Close sentinel received, exiting');
         break;
-      }
-
-      // Apply any pending session reset before starting the next query.
-      // This ensures /new-session takes effect even when the container is
-      // idle-waiting or was mid-query when the reset message arrived.
-      if (pendingReset) {
-        log('Applying pending reset: clearing sessionId and resumeAt for new session');
-        sessionId = undefined;
-        resumeAt = undefined;
-        pendingReset = false;
       }
 
       log(`Got new message (${nextMessage.length} chars), starting new query`);
