@@ -69,3 +69,7 @@ Do not leave stale entries — they create confusion when preparing the next upd
 ### Changes to systemd service
 
 - Run npm build before agent start
+
+### Changes to channels
+
+- Add telegram support
