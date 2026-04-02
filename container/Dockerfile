@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # NanoClaw Agent Container
 # Runs Claude Agent SDK in isolated Linux VM with browser automation
 
@@ -59,6 +60,23 @@ RUN printf '#!/bin/bash\nset -e\ncd /app && npx tsc --outDir /tmp/dist 2>&1 >&2\
 
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
+
+# Bake SSH key and config into image via build secrets (not visible in image layers)
+ARG SSH_KEY_NAME
+RUN --mount=type=secret,id=ssh_key \
+    --mount=type=secret,id=ssh_config \
+    if [ -f /run/secrets/ssh_key ] && [ -n "$SSH_KEY_NAME" ]; then \
+      mkdir -p /home/node/.ssh && \
+      cp /run/secrets/ssh_key "/home/node/.ssh/$SSH_KEY_NAME" && \
+      chmod 600 "/home/node/.ssh/$SSH_KEY_NAME" && \
+      chown node:node /home/node/.ssh "/home/node/.ssh/$SSH_KEY_NAME"; \
+    fi && \
+    if [ -f /run/secrets/ssh_config ]; then \
+      mkdir -p /home/node/.ssh && \
+      cp /run/secrets/ssh_config /home/node/.ssh/config && \
+      chmod 600 /home/node/.ssh/config && \
+      chown node:node /home/node/.ssh /home/node/.ssh/config; \
+    fi
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node

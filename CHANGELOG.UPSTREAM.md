@@ -62,6 +62,9 @@ Do not leave stale entries — they create confusion when preparing the next upd
 ### Changes to container build
 
 - Add current date and time to image tag
+- Use docker build kit for container build
+- Add ssh keys and ssh config of host to container
+- Those ssh keys and configs are added as `mount=type=secret`
 
 ### Changes to systemd service
 
