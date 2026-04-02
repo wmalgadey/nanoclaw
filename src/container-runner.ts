@@ -27,6 +27,12 @@ import {
 import { OneCLI } from '@onecli-sh/sdk';
 import { validateAdditionalMounts } from './mount-security.js';
 import { RegisteredGroup } from './types.js';
+import { readEnvFile } from './env.js';
+import './plugins/index.js';
+import {
+  getPluginContainerEnvKeys,
+  getPluginContainerEnv,
+} from './plugins/registry.js';
 
 const onecli = new OneCLI({ url: ONECLI_URL });
 
@@ -226,6 +232,7 @@ function buildVolumeMounts(
 async function buildContainerArgs(
   mounts: VolumeMount[],
   containerName: string,
+  pluginEnv: Record<string, string>,
   agentIdentifier?: string,
 ): Promise<string[]> {
   const args: string[] = ['run', '-i', '--rm', '--name', containerName];
@@ -269,6 +276,18 @@ async function buildContainerArgs(
     }
   }
 
+  // Inject plugin-declared env vars (e.g. TAILSCALE_AUTH_KEY for VPN plugins)
+  if (Object.keys(pluginEnv).length > 0) {
+    // Write plugin env vars to a temporary env file with restrictive permissions
+    const pluginEnvDir = fs.mkdtempSync(path.join(DATA_DIR, 'plugin-env-'));
+    const envFilePath = path.join(pluginEnvDir, 'env');
+    const envFileContents = Object.entries(pluginEnv)
+      .map(([key, val]) => `${key}=${String(val)}`)
+      .join('\n');
+    fs.writeFileSync(envFilePath, envFileContents, { mode: 0o600 });
+    args.push('--env-file', envFilePath);
+  }
+
   args.push(CONTAINER_IMAGE);
 
   return args;
@@ -292,9 +311,13 @@ export async function runContainerAgent(
   const agentIdentifier = input.isMain
     ? undefined
     : group.folder.toLowerCase().replace(/_/g, '-');
+  const pluginEnvKeys = getPluginContainerEnvKeys();
+  const rawEnv = readEnvFile(pluginEnvKeys);
+  const pluginEnv = getPluginContainerEnv(rawEnv);
   const containerArgs = await buildContainerArgs(
     mounts,
     containerName,
+    pluginEnv,
     agentIdentifier,
   );
 

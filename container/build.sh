@@ -4,13 +4,16 @@
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+PROJECT_DIR="$SCRIPT_DIR/.."
 
 DATE_TAG="$(date +%Y%m%d-%H%M%S)"
 
 IMAGE_NAME="nanoclaw-agent"
 TAG="${1:-$DATE_TAG}"
 CONTAINER_RUNTIME="${CONTAINER_RUNTIME:-docker}"
+
+echo "Generating plugin manifest..."
+(cd "$PROJECT_DIR" && npx tsx scripts/generate-plugin-manifest.ts)
 
 echo "Building NanoClaw agent container image..."
 echo "Image: ${IMAGE_NAME}:${TAG}"
@@ -45,6 +48,7 @@ fi
 
 export DOCKER_BUILDKIT=1
 
+cd "$SCRIPT_DIR"
 ${CONTAINER_RUNTIME} build $TAGS_ARG $SECRET_ARG $BUILD_ARG .
 
 # Update CONTAINER_IMAGE in .env so NanoClaw uses this image on next start
