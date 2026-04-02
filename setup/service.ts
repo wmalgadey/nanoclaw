@@ -233,12 +233,14 @@ function setupSystemd(
     systemctlPrefix = 'systemctl --user';
   }
 
+  const npmPath = path.join(path.dirname(nodePath), 'npm');
   const unit = `[Unit]
 Description=NanoClaw Personal Assistant
 After=network.target
 
 [Service]
 Type=simple
+ExecStartPre=${npmPath} --prefix ${projectRoot} run build
 ExecStart=${nodePath} ${projectRoot}/dist/index.js
 WorkingDirectory=${projectRoot}
 Restart=always

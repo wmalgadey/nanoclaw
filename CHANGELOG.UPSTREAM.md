@@ -62,3 +62,7 @@ Do not leave stale entries — they create confusion when preparing the next upd
 ### Changes to container build
 
 - Add current date and time to image tag
+
+### Changes to systemd service
+
+- Run npm build before agent start
