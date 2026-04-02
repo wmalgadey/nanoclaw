@@ -48,6 +48,15 @@ Four types of skills exist in NanoClaw. See [CONTRIBUTING.md](CONTRIBUTING.md) f
 
 Before creating a PR, adding a skill, or preparing any contribution, you MUST read [CONTRIBUTING.md](CONTRIBUTING.md). It covers accepted change types, the four skill types and their guidelines, SKILL.md format rules, PR requirements, and the pre-submission checklist (searching for existing PRs/issues, testing, description format).
 
+## Local Customizations vs. Upstream
+
+Always check [`CHANGELOG.UPSTREAM.md`](CHANGELOG.UPSTREAM.md) when:
+- You need to understand what **this instance** is capable of or how it differs from the upstream repo
+- You need to know which channels, features, or integrations are active here
+- You are making code changes that touch upstream code (verify no conflict, update the file if the deviation changes)
+
+**Before every `git commit` or `git push`:** update `CHANGELOG.UPSTREAM.md` to reflect any new or changed local deviations from upstream. Include the update in the same commit.
+
 ## Development
 
 Run commands directly—don't tell the user to run them.
