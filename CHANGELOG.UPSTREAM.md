@@ -58,3 +58,7 @@ Do not leave stale entries — they create confusion when preparing the next upd
 ---
 
 ## Code Differences
+
+### Changes to container build
+
+- Add current date and time to image tag
