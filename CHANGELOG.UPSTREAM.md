@@ -73,3 +73,21 @@ Do not leave stale entries — they create confusion when preparing the next upd
 ### Changes to channels
 
 - Add telegram support
+
+### Plugins
+
+- `src/plugins/blogwatcher.ts`: added — installs blogwatcher v0.0.2 binary into the container from `Hyaxia/blogwatcher` releases.
+- `src/plugins/index.ts`: imports `blogwatcher.js` for self-registration.
+- `container/skills/blogwatcher/SKILL.md`: added — agent instructions for using the blogwatcher CLI.
+
+### Tailscale plugin
+
+- `src/plugins/tailscale.ts`: added — installs tailscale v1.96.4 binaries; injects `TAILSCALE_AUTH_KEY` and `TAILSCALE_HOSTNAME` env vars into the container.
+- `src/plugins/registry.ts`: added `stripComponents?: number` to `BinaryInstall` interface for archives with subdirectory structure.
+- `container/plugins/tailscale-init.sh`: added — starts `tailscaled` in userspace networking mode and calls `tailscale up` when `TAILSCALE_AUTH_KEY` is set.
+- `container/skills/tailscale/SKILL.md`: added — agent instructions for Tailscale VPN usage.
+
+### Dockerfile fixes
+
+- `container/Dockerfile`: fixed archive extraction in plugin installer — changed tar args from `['xz', '--strip-components=1', ...]` (missing file arg, wrong strip) to `['xzf', archivePath, ...]` (correct).
+- `container/Dockerfile`: added per-plugin `stripComponents` support — when `>0`, all archive files are extracted with `--strip-components=N` without specific file selectors (required because tar file selectors must match full archive paths).

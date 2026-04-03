@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "name": "blogwatcher",
+    "archive": "https://github.com/Hyaxia/blogwatcher/releases/download/v0.0.2/blogwatcher_0.0.2_linux_amd64.tar.gz",
+    "extract": [
+      "blogwatcher"
+    ],
+    "dest": "/usr/local/bin/blogwatcher"
+  },
+  {
+    "name": "tailscale",
+    "archive": "https://pkgs.tailscale.com/stable/tailscale_1.96.4_amd64.tgz",
+    "extract": [
+      "tailscale",
+      "tailscaled"
+    ],
+    "dest": "/usr/local/bin/",
+    "stripComponents": 1
+  }
+]

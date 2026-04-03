@@ -34,7 +34,6 @@ import {
   getAllChats,
   getAllRegisteredGroups,
   getAllSessions,
-  deleteSession,
   getAllTasks,
   getLastBotMessageTimestamp,
   getMessagesSince,
