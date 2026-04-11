@@ -1,7 +1,7 @@
 # CHANGELOG.UPSTREAM.md
 
 Effective differences of this installation compared to `upstream/main`.
-As of: 2026-03-22 · Version: **1.2.23** (locally customized)
+As of: 2026-04-11 · Version: **1.2.52** (locally customized)
 
 ---
 
