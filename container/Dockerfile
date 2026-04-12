@@ -111,22 +111,28 @@ RUN chmod +x /app/entrypoint.sh
 # Set ownership to node user (non-root) for writable directories
 RUN chown -R node:node /workspace && chmod 777 /home/node
 
-# Bake SSH key and config into image via build secrets (not visible in image layers)
-ARG SSH_KEY_NAME
-RUN --mount=type=secret,id=ssh_key \
+# Bake SSH keys and config into image via build secrets (not visible in image layers)
+# SSH_KEY_NAMES is a colon-separated list of key filenames corresponding to
+# build secrets ssh_key_0, ssh_key_1, ... (up to 4 keys supported)
+ARG SSH_KEY_NAMES
+RUN --mount=type=secret,id=ssh_key_0 \
+    --mount=type=secret,id=ssh_key_1 \
+    --mount=type=secret,id=ssh_key_2 \
+    --mount=type=secret,id=ssh_key_3 \
     --mount=type=secret,id=ssh_config \
-    if [ -f /run/secrets/ssh_key ] && [ -n "$SSH_KEY_NAME" ]; then \
-      mkdir -p /home/node/.ssh && \
-      cp /run/secrets/ssh_key "/home/node/.ssh/$SSH_KEY_NAME" && \
-      chmod 600 "/home/node/.ssh/$SSH_KEY_NAME" && \
-      chown node:node /home/node/.ssh "/home/node/.ssh/$SSH_KEY_NAME"; \
-    fi && \
+    mkdir -p /home/node/.ssh && \
+    i=0; for name in $(echo "$SSH_KEY_NAMES" | tr ':' ' '); do \
+      if [ -f "/run/secrets/ssh_key_$i" ]; then \
+        cp "/run/secrets/ssh_key_$i" "/home/node/.ssh/$name" && \
+        chmod 600 "/home/node/.ssh/$name"; \
+      fi; \
+      i=$((i+1)); \
+    done && \
     if [ -f /run/secrets/ssh_config ]; then \
-      mkdir -p /home/node/.ssh && \
       cp /run/secrets/ssh_config /home/node/.ssh/config && \
-      chmod 600 /home/node/.ssh/config && \
-      chown node:node /home/node/.ssh /home/node/.ssh/config; \
-    fi
+      chmod 600 /home/node/.ssh/config; \
+    fi && \
+    chown -R node:node /home/node/.ssh
 
 # Switch to non-root user (required for --dangerously-skip-permissions)
 USER node

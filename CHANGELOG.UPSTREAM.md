@@ -63,8 +63,8 @@ Do not leave stale entries — they create confusion when preparing the next upd
 
 - Add current date and time to image tag
 - Use docker build kit for container build
-- Add ssh keys and ssh config of host to container
-- Those ssh keys and configs are added as `mount=type=secret`
+- Multiple SSH keys supported: `SSH_KEY_PATHS` in `.env` is a comma-separated list of host key paths; each is baked into the image via numbered build secrets (`ssh_key_0`, `ssh_key_1`, …, up to 4). `ARG SSH_KEY_NAMES` is a colon-separated list of the resulting filenames inside `~/.ssh/`. Replaces the old single-key `SSH_KEY_PATH` / `ARG SSH_KEY_NAME` mechanism.
+- `container/build.sh`: added `--no-cache` flag support (`./container/build.sh --no-cache`) to bypass Docker layer cache for `npm install -g` and other cached steps.
 
 ### Changes to systemd service
 

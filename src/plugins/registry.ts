@@ -41,9 +41,7 @@ export function getRegisteredPlugins(): Plugin[] {
 /** Collect all container env keys declared by registered plugins */
 export function getPluginContainerEnvKeys(): string[] {
   return [
-    ...new Set(
-      [...plugins.values()].flatMap((p) => p.containerEnvKeys ?? []),
-    ),
+    ...new Set([...plugins.values()].flatMap((p) => p.containerEnvKeys ?? [])),
   ];
 }
 
