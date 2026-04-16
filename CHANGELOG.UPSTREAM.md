@@ -1,7 +1,7 @@
 # CHANGELOG.UPSTREAM.md
 
 Effective differences of this installation compared to `upstream/main`.
-As of: 2026-04-11 · Version: **1.2.52** (locally customized)
+As of: 2026-04-16 · Version: **1.2.53** (locally customized)
 
 ---
 
@@ -91,3 +91,8 @@ Do not leave stale entries — they create confusion when preparing the next upd
 
 - `container/Dockerfile`: fixed archive extraction in plugin installer — changed tar args from `['xz', '--strip-components=1', ...]` (missing file arg, wrong strip) to `['xzf', archivePath, ...]` (correct).
 - `container/Dockerfile`: added per-plugin `stripComponents` support — when `>0`, all archive files are extracted with `--strip-components=N` without specific file selectors (required because tar file selectors must match full archive paths).
+
+## Merged Branches / External Repos
+
+### Merged: skill/channel-formatting (upstream)
+Merged 2026-04-16. Adds per-channel text formatting (WhatsApp bold/italic/strikethrough syntax, Telegram MarkdownV2, plain text). Adds `src/text-styles.ts` and extends `src/router.ts` and `src/index.ts`. No conflicts.
