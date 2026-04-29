@@ -7,9 +7,9 @@ description: Magrathea LLM Wiki — Ingest, Query, Lint operations over the Zett
 
 Paths (always use these):
 - **Zettelkasten** (Sources, read-only): `/workspace/extra/private-vault/zettelkasten/`
-- **Wiki** (LLM-maintained): `/workspace/extra/private-vault/llm-wiki/`
-- **Index**: `/workspace/extra/private-vault/llm-wiki/index.md`
-- **Log**: `/workspace/extra/private-vault/llm-wiki/log.md`
+- **Wiki** (LLM-maintained): `/workspace/agent/llm-wiki/`
+- **Index**: `/workspace/agent/llm-wiki/index.md`
+- **Log**: `/workspace/agent/llm-wiki/log.md`
 
 ---
 
