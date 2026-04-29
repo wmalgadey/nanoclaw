@@ -25,8 +25,8 @@ export const applyInstallPackages: ApprovalHandler = async ({ session, payload, 
     return;
   }
   updateContainerConfig(agentGroup.folder, (cfg) => {
-    if (payload.apt) cfg.packages.apt.push(...(payload.apt as string[]));
-    if (payload.npm) cfg.packages.npm.push(...(payload.npm as string[]));
+    if (payload.apt) cfg.packages.apt = [...new Set([...cfg.packages.apt, ...(payload.apt as string[])])];
+    if (payload.npm) cfg.packages.npm = [...new Set([...cfg.packages.npm, ...(payload.npm as string[])])];
   });
 
   const pkgs = [

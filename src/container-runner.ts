@@ -331,6 +331,15 @@ function buildMounts(
     mounts.push(...providerContribution.mounts);
   }
 
+  // Tailscale host-socket passthrough — gives the container access to Tailscale
+  // peers via the host daemon without injecting an auth key into the container.
+  const TAILSCALE_SOCKET = '/run/tailscale/tailscaled.sock';
+  if (containerConfig.tailscaleSocket && fs.existsSync(TAILSCALE_SOCKET)) {
+    mounts.push({ hostPath: TAILSCALE_SOCKET, containerPath: TAILSCALE_SOCKET, readonly: false });
+  } else if (containerConfig.tailscaleSocket) {
+    log.warn('tailscaleSocket requested but host socket not found — skipping', { path: TAILSCALE_SOCKET });
+  }
+
   return mounts;
 }
 
@@ -505,9 +514,26 @@ export async function buildAgentGroupImage(agentGroupId: string): Promise<void> 
     throw new Error('No packages to install. Use install_packages first.');
   }
 
+  // Packages that require a custom apt repo before they can be installed.
+  const REPO_SETUP: Record<string, string> = {
+    tailscale: [
+      `curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.noarmor.gpg`,
+      `  | tee /usr/share/keyrings/tailscale-archive-keyring.gpg >/dev/null`,
+      `&& curl -fsSL https://pkgs.tailscale.com/stable/debian/bookworm.tailscale-keyring.list`,
+      `  | tee /etc/apt/sources.list.d/tailscale.list`,
+      `&& apt-get update`,
+    ].join(' \\\n    '),
+  };
+
   let dockerfile = `FROM ${CONTAINER_IMAGE}\nUSER root\n`;
   if (aptPackages.length > 0) {
-    dockerfile += `RUN apt-get update && apt-get install -y ${aptPackages.join(' ')} && rm -rf /var/lib/apt/lists/*\n`;
+    const uniquePackages = [...new Set(aptPackages)];
+    const packagesNeedingRepo = uniquePackages.filter((p) => REPO_SETUP[p]);
+    const repoSteps = packagesNeedingRepo.map((p) => `RUN ${REPO_SETUP[p]}\n`).join('');
+    dockerfile += repoSteps;
+    // If a repo step already ran apt-get update, skip it in the install line.
+    const updatePrefix = packagesNeedingRepo.length > 0 ? '' : 'apt-get update && ';
+    dockerfile += `RUN ${updatePrefix}apt-get install -y ${uniquePackages.join(' ')} && rm -rf /var/lib/apt/lists/*\n`;
   }
   if (npmPackages.length > 0) {
     // pnpm skips build scripts unless packages are allowlisted. Append each

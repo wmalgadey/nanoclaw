@@ -47,6 +47,12 @@ export interface ContainerConfig {
   agentGroupId?: string;
   /** Max messages per prompt. Falls back to code default if unset. */
   maxMessagesPerPrompt?: number;
+  /**
+   * Mount the host's Tailscale socket at /run/tailscale/tailscaled.sock so
+   * the container can reach Tailscale peers via the host daemon without
+   * needing its own auth key. The socket must exist on the host at spawn time.
+   */
+  tailscaleSocket?: boolean;
 }
 
 function emptyConfig(): ContainerConfig {
@@ -87,6 +93,7 @@ export function readContainerConfig(folder: string): ContainerConfig {
       assistantName: raw.assistantName,
       agentGroupId: raw.agentGroupId,
       maxMessagesPerPrompt: raw.maxMessagesPerPrompt,
+      tailscaleSocket: raw.tailscaleSocket,
     };
   } catch (err) {
     console.error(`[container-config] failed to parse ${p}: ${String(err)}`);
