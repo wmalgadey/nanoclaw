@@ -248,6 +248,28 @@ function collectAptUpdates() {
   return { count, security, esm, raw: raw.trim() };
 }
 
+function collectBrewUpdates() {
+  const p = path.join(DATA_DIR, 'brew-outdated.json');
+  if (!existsSync(p)) return null;
+  try {
+    const d = JSON.parse(readFileSync(p, 'utf-8'));
+    const formulae: { name: string; installed: string; current: string; pinned: boolean }[] =
+      (d.formulae || []).map((f: Record<string, unknown>) => ({
+        name:      String(f.name ?? ''),
+        installed: String((f.installed_versions as string[])?.[0] ?? ''),
+        current:   String(f.current_version ?? ''),
+        pinned:    Boolean(f.pinned),
+      }));
+    const casks: { name: string; installed: string; current: string }[] =
+      (d.casks || []).map((c: Record<string, unknown>) => ({
+        name:      String(c.name ?? ''),
+        installed: String((c.installed_versions as string[])?.[0] ?? ''),
+        current:   String(c.current_version ?? ''),
+      }));
+    return { formulae, casks, timestamp: d.timestamp ?? null };
+  } catch { return null; }
+}
+
 async function collectSnapUpdates() {
   try {
     const r = await snapGet('/v2/find?select=refresh') as Record<string, unknown> | null;
@@ -362,10 +384,16 @@ function collectRateLimitMetrics() {
   let out5h    = 0;
   let out24h   = 0;
   let out7d    = 0;
-  let extraOut = 0;
 
   // Oldest token timestamp inside 5h window — used to compute resetInMs
   let oldest5hTs: number | null = null;
+
+  // All events in last 7d for peak-5h computation: [ts, outputTokens]
+  const events7d: [number, number][] = [];
+
+  // Most recent "out of extra usage" synthetic message
+  let lastExtraHitTs: number | null = null;
+  let lastExtraHitMsg = '';
 
   function scanFile(filePath: string) {
     try {
@@ -374,15 +402,34 @@ function collectRateLimitMetrics() {
         if (!line.trim()) continue;
         try {
           const e = JSON.parse(line);
-          if (e.type !== 'assistant' || !e.message?.usage || !e.timestamp) continue;
+          if (e.type !== 'assistant' || !e.timestamp) continue;
           const ts = new Date(e.timestamp).getTime();
           if (isNaN(ts)) continue;
+
+          // Synthetic rate-limit messages (model: '<synthetic>')
+          if (e.message?.model === '<synthetic>') {
+            const content: unknown[] = Array.isArray(e.message?.content) ? e.message.content : [];
+            for (const c of content) {
+              if (typeof (c as Record<string,unknown>)?.text === 'string') {
+                const text = (c as {text: string}).text;
+                if (text.includes('out of extra usage')) {
+                  if (lastExtraHitTs === null || ts > lastExtraHitTs) {
+                    lastExtraHitTs = ts;
+                    lastExtraHitMsg = text;
+                  }
+                }
+              }
+            }
+            continue;
+          }
+
+          if (!e.message?.usage) continue;
           const outputTokens: number = e.message.usage.output_tokens || 0;
-          const tier: string = e.message.usage.service_tier || 'standard';
           const age = now - ts;
 
           if (age <= window7dMs) {
             out7d += outputTokens;
+            events7d.push([ts, outputTokens]);
             if (age <= window24hMs) {
               out24h += outputTokens;
               if (age <= window5hMs) {
@@ -391,7 +438,6 @@ function collectRateLimitMetrics() {
               }
             }
           }
-          if (tier !== 'standard') extraOut += outputTokens;
         } catch {}
       }
     } catch {}
@@ -441,12 +487,60 @@ function collectRateLimitMetrics() {
   // Date string for daily bucket (UTC)
   const dailyDate = new Date(todayUtcMs).toISOString().slice(0, 10);
 
+  // Parse "resets 7pm" / "resets 1:30am" as next Europe/Berlin occurrence (minute scan)
+  function parseExtraReset(msg: string): number | null {
+    const m = msg.match(/resets\s+(\d+)(?::(\d+))?\s*(am|pm)/i);
+    if (!m) return null;
+    let h = parseInt(m[1]);
+    const min = parseInt(m[2] || '0');
+    const ap = m[3].toLowerCase();
+    if (ap === 'pm' && h !== 12) h += 12;
+    else if (ap === 'am' && h === 12) h = 0;
+    const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', hour: 'numeric', minute: '2-digit', hour12: false });
+    for (let off = 1; off <= 25 * 60; off++) {
+      const t = now + off * 60000;
+      const s = fmt.format(new Date(t));
+      const parts = s.split(':');
+      if (parseInt(parts[0]) % 24 === h && parseInt(parts[1]) === min) return t - (t % 60000);
+    }
+    return null;
+  }
+
+  // Peak 5h rolling window over last 7d (sliding window over sorted events)
+  let peak5h = out5h;
+  if (events7d.length > 1) {
+    events7d.sort((a, b) => a[0] - b[0]);
+    let windowSum = 0;
+    let left = 0;
+    for (let right = 0; right < events7d.length; right++) {
+      windowSum += events7d[right][1];
+      while (events7d[right][0] - events7d[left][0] > window5hMs) {
+        windowSum -= events7d[left][1];
+        left++;
+      }
+      if (windowSum > peak5h) peak5h = windowSum;
+    }
+  }
+
+  // Daily average: out7d / number of distinct UTC days with activity
+  const activeDays = new Set(events7d.map(([ts]) => Math.floor(ts / 86400000))).size;
+  const dailyAvg = activeDays > 0 ? Math.round(out7d / activeDays) : 0;
+
+  const extraResetTs = lastExtraHitMsg ? parseExtraReset(lastExtraHitMsg) : null;
+  const extraLimited = extraResetTs !== null && extraResetTs > now;
+
   return {
     window5h:    { outputTokens: out5h,  resetInMs },
     daily:       { outputTokens: out24h, date: dailyDate },
     weekly:      { outputTokens: out7d },
-    extraOutput: extraOut,
     limits:      { h5: LIMIT_5H, h24: LIMIT_24H, d7: LIMIT_7D },
+    context:     { peak5h, dailyAvg, activeDays },
+    extraUsage:  {
+      limited:    extraLimited,
+      resetTs:    extraResetTs,
+      lastHitTs:  lastExtraHitTs,
+      message:    lastExtraHitMsg || null,
+    },
   };
 }
 
@@ -603,153 +697,97 @@ function extractText(content: string): string {
 
 function computeMsgMetrics(inDbPath: string, outDbPath: string): MsgMetrics | null {
   try {
-    const now = Date.now();
-    const todayUtcMs = now - (now % 86400000);
-    const last7dMs   = now - 7 * 86400000;
-    const last24hMs  = now - 86400000;
+    // ISO strings for SQL comparisons (timestamps stored as TEXT ISO-8601)
+    const now = new Date();
+    const todayIso  = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate())).toISOString();
+    const last7dIso = new Date(Date.now() - 7 * 86400000).toISOString();
+    const last24hIso= new Date(Date.now() - 86400000).toISOString();
 
-    // ── inbound queries ──────────────────────────────────────────────────────
-    let inDb: Database | null = null;
     let total = 0, today = 0, last7d = 0, pending = 0;
     const byHour: number[] = new Array(24).fill(0);
     const byKind: Record<string, number> = {};
-    let lastInMs: number | null = null;
+    let lastInIso: string | null = null;
     let recentMessages: { timestamp: number; kind: string; text: string }[] = [];
 
     if (existsSync(inDbPath)) {
+      let inDb: Database | null = null;
       try {
         inDb = new Database(inDbPath, { readonly: true });
 
-        // Total (excluding system)
-        const totRow = inDb.query<{ cnt: number }, []>(
-          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system'"
-        ).get();
-        total = totRow?.cnt ?? 0;
+        total   = (inDb.query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system'").get()?.cnt ?? 0);
+        today   = (inDb.query<{ cnt: number }, [string]>("SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?").get(todayIso)?.cnt ?? 0);
+        last7d  = (inDb.query<{ cnt: number }, [string]>("SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?").get(last7dIso)?.cnt ?? 0);
+        pending = (inDb.query<{ cnt: number }, []>("SELECT COUNT(*) AS cnt FROM messages_in WHERE status = 'pending'").get()?.cnt ?? 0);
 
-        // Today
-        const todayRow = inDb.query<{ cnt: number }, [number]>(
-          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?"
-        ).get(todayUtcMs);
-        today = todayRow?.cnt ?? 0;
+        // byHour using SQLite strftime to extract UTC hour from ISO string
+        const hourRows = inDb.query<{ h: number }, [string]>(
+          "SELECT CAST(strftime('%H', timestamp) AS INTEGER) AS h FROM messages_in WHERE timestamp >= ?"
+        ).all(last24hIso);
+        for (const row of hourRows) byHour[row.h] = (byHour[row.h] ?? 0) + 1;
 
-        // Last 7 days
-        const last7Row = inDb.query<{ cnt: number }, [number]>(
-          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?"
-        ).get(last7dMs);
-        last7d = last7Row?.cnt ?? 0;
-
-        // Pending
-        const pendRow = inDb.query<{ cnt: number }, []>(
-          "SELECT COUNT(*) AS cnt FROM messages_in WHERE status = 'pending'"
-        ).get();
-        pending = pendRow?.cnt ?? 0;
-
-        // byHour — last 24h
-        const hourRows = inDb.query<{ ts: number }, [number]>(
-          "SELECT timestamp AS ts FROM messages_in WHERE timestamp >= ?"
-        ).all(last24hMs);
-        for (const row of hourRows) {
-          const hourIdx = new Date(row.ts).getUTCHours();
-          byHour[hourIdx] = (byHour[hourIdx] ?? 0) + 1;
-        }
-
-        // byKind
         const kindRows = inDb.query<{ kind: string; cnt: number }, []>(
           "SELECT kind, COUNT(*) AS cnt FROM messages_in GROUP BY kind"
         ).all();
-        for (const row of kindRows) { byKind[row.kind] = row.cnt; }
+        for (const row of kindRows) byKind[row.kind] = row.cnt;
 
-        // lastActivityMs
-        const lastInRow = inDb.query<{ mx: number | null }, []>(
-          "SELECT MAX(timestamp) AS mx FROM messages_in"
-        ).get();
-        lastInMs = lastInRow?.mx ?? null;
+        lastInIso = inDb.query<{ mx: string | null }, []>("SELECT MAX(timestamp) AS mx FROM messages_in").get()?.mx ?? null;
 
-        // recentMessages
-        const recRows = inDb.query<{ timestamp: number; kind: string; content: string }, []>(
+        const recRows = inDb.query<{ timestamp: string; kind: string; content: string }, []>(
           "SELECT timestamp, kind, content FROM messages_in ORDER BY timestamp DESC LIMIT 5"
         ).all();
         recentMessages = recRows.map(r => ({
-          timestamp: r.timestamp,
+          timestamp: r.timestamp ? new Date(r.timestamp).getTime() : 0,
           kind:      r.kind ?? '',
           text:      extractText(r.content),
         }));
-      } finally {
-        try { inDb?.close(); } catch {}
-      }
+      } finally { try { inDb?.close(); } catch {} }
     }
 
-    // ── outbound queries ─────────────────────────────────────────────────────
-    let outDb: Database | null = null;
-    let deliveryErrors = 0;
-    let lastOutMs: number | null = null;
-    let outTimestamps: number[] = [];
+    let lastOutIso: string | null = null;
+    let medianResponseMs: number | null = null;
 
     if (existsSync(outDbPath)) {
+      let outDb: Database | null = null;
       try {
         outDb = new Database(outDbPath, { readonly: true });
+        lastOutIso = outDb.query<{ mx: string | null }, []>("SELECT MAX(timestamp) AS mx FROM messages_out").get()?.mx ?? null;
 
-        // deliveryErrors
-        const deRow = outDb.query<{ cnt: number }, []>(
-          "SELECT COUNT(*) AS cnt FROM messages_out WHERE delivered IS NOT NULL AND json_extract(delivered, '$.status') != 'delivered'"
-        ).get();
-        deliveryErrors = deRow?.cnt ?? 0;
-
-        // lastActivityMs for outbound
-        const lastOutRow = outDb.query<{ mx: number | null }, []>(
-          "SELECT MAX(timestamp) AS mx FROM messages_out"
-        ).get();
-        lastOutMs = lastOutRow?.mx ?? null;
-
-        // outbound timestamps for median response time
-        const outRows = outDb.query<{ ts: number }, []>(
-          "SELECT timestamp AS ts FROM messages_out ORDER BY timestamp ASC"
-        ).all();
-        outTimestamps = outRows.map(r => r.ts);
-      } finally {
-        try { outDb?.close(); } catch {}
-      }
+        // Response time via in_reply_to: join outbound replies with inbound originals
+        if (existsSync(inDbPath)) {
+          let inDb2: Database | null = null;
+          try {
+            inDb2 = new Database(inDbPath, { readonly: true });
+            const inRows = inDb2.query<{ id: string; ts: string }, []>(
+              "SELECT id, timestamp AS ts FROM messages_in WHERE kind != 'system' ORDER BY ts"
+            ).all();
+            const outRows = outDb.query<{ reply: string; ts: string }, []>(
+              "SELECT in_reply_to AS reply, MIN(timestamp) AS ts FROM messages_out WHERE in_reply_to IS NOT NULL GROUP BY in_reply_to"
+            ).all();
+            const outMap = new Map(outRows.map(r => [r.reply, r.ts]));
+            const deltas: number[] = [];
+            for (const row of inRows) {
+              const outTs = outMap.get(row.id);
+              if (outTs && row.ts) {
+                const delta = new Date(outTs).getTime() - new Date(row.ts).getTime();
+                if (delta >= 0 && delta < 300000) deltas.push(delta);
+              }
+            }
+            if (deltas.length > 0) {
+              deltas.sort((a, b) => a - b);
+              const mid = Math.floor(deltas.length / 2);
+              medianResponseMs = deltas.length % 2 === 0
+                ? Math.round((deltas[mid - 1] + deltas[mid]) / 2)
+                : deltas[mid];
+            }
+          } finally { try { inDb2?.close(); } catch {} }
+        }
+      } finally { try { outDb?.close(); } catch {} }
     }
 
-    // ── medianResponseMs ─────────────────────────────────────────────────────
-    let medianResponseMs: number | null = null;
-    if (existsSync(inDbPath) && outTimestamps.length > 0) {
-      let inDb2: Database | null = null;
-      try {
-        inDb2 = new Database(inDbPath, { readonly: true });
-        const inRows = inDb2.query<{ ts: number }, []>(
-          "SELECT timestamp AS ts FROM messages_in WHERE kind != 'system' ORDER BY timestamp ASC"
-        ).all();
-        const inTs = inRows.map(r => r.ts);
+    const candidates = [lastInIso, lastOutIso].filter(Boolean).map(s => new Date(s!).getTime());
+    const lastActivityMs = candidates.length ? Math.max(...candidates) : null;
 
-        // Pair each inbound message with the first outbound message that comes after it
-        const deltas: number[] = [];
-        let outIdx = 0;
-        for (const its of inTs) {
-          while (outIdx < outTimestamps.length && outTimestamps[outIdx] <= its) outIdx++;
-          if (outIdx < outTimestamps.length) {
-            deltas.push(outTimestamps[outIdx] - its);
-          }
-        }
-        if (deltas.length > 0) {
-          deltas.sort((a, b) => a - b);
-          const mid = Math.floor(deltas.length / 2);
-          medianResponseMs = deltas.length % 2 === 0
-            ? Math.round((deltas[mid - 1] + deltas[mid]) / 2)
-            : deltas[mid];
-        }
-      } finally {
-        try { inDb2?.close(); } catch {}
-      }
-    }
-
-    // ── lastActivityMs ───────────────────────────────────────────────────────
-    let lastActivityMs: number | null = null;
-    if (lastInMs !== null && lastOutMs !== null) lastActivityMs = Math.max(lastInMs, lastOutMs);
-    else if (lastInMs !== null) lastActivityMs = lastInMs;
-    else if (lastOutMs !== null) lastActivityMs = lastOutMs;
-
-    return { total, today, last7d, pending, byHour, byKind, medianResponseMs, deliveryErrors, lastActivityMs, recentMessages };
+    return { total, today, last7d, pending, byHour, byKind, medianResponseMs, deliveryErrors: 0, lastActivityMs, recentMessages };
   } catch { return null; }
 }
 
@@ -803,9 +841,10 @@ function collectAgentDetail(): AgentDetail[] {
     const rows = q<Record<string, unknown>>(db, `
       SELECT
         ag.id, ag.name, ag.folder, ag.agent_provider,
-        mga.session_mode, mga.engage_mode, mga.pattern,
-        mga.unknown_sender_policy, mga.priority,
-        mg.channel_type, mg.platform_id, mg.name as mg_name
+        mga.session_mode, mga.engage_mode, mga.engage_pattern,
+        mga.sender_scope, mga.priority,
+        mg.channel_type, mg.platform_id, mg.name as mg_name,
+        mg.unknown_sender_policy
       FROM agent_groups ag
       LEFT JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id
       LEFT JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
@@ -830,7 +869,7 @@ function collectAgentDetail(): AgentDetail[] {
           mgName:               String(row.mg_name               ?? ''),
           sessionMode:          String(row.session_mode          ?? ''),
           engageMode:           String(row.engage_mode           ?? ''),
-          pattern:              String(row.pattern               ?? ''),
+          pattern:              String(row.engage_pattern        ?? ''),
           unknownSenderPolicy:  String(row.unknown_sender_policy ?? ''),
           priority:             Number(row.priority              ?? 0),
         });
@@ -895,7 +934,7 @@ async function buildSnapshot() {
     diskIo:  collectDiskIo(),
     os:      collectOsInfo(),
     disk,
-    updates: { apt: collectAptUpdates(), snap: snapUpdates },
+    updates: { apt: collectAptUpdates(), snap: snapUpdates, brew: collectBrewUpdates() },
     tailscale,
     logMetrics,
   };
@@ -985,29 +1024,36 @@ async function collectLogMetrics() {
 
 const logSubs = new Set<(c: Uint8Array) => void>();
 let logOffset = 0;
+let errLogOffset = 0;
 const enc = new TextEncoder();
 
-function initLogTail() {
-  const logFile = path.join(LOGS_DIR, 'nanoclaw.log');
-  if (!existsSync(logFile)) return;
-  try { logOffset = statSync(logFile).size; } catch { return; }
+function tailFile(filePath: string, offsetRef: { v: number }, onLines: (lines: string[]) => void) {
+  if (!existsSync(filePath)) return;
+  try { offsetRef.v = statSync(filePath).size; } catch { return; }
   setInterval(() => {
-    if (logSubs.size === 0) return;
     try {
-      const size = statSync(logFile).size;
-      if (size < logOffset) { logOffset = size; return; }
-      if (size === logOffset) return;
-      const buf = Buffer.alloc(size - logOffset);
-      const fd = openSync(logFile, 'r');
-      readSync(fd, buf, 0, buf.length, logOffset);
+      const size = statSync(filePath).size;
+      if (size < offsetRef.v) { offsetRef.v = size; return; }
+      if (size === offsetRef.v) return;
+      const buf = Buffer.alloc(size - offsetRef.v);
+      const fd = openSync(filePath, 'r');
+      readSync(fd, buf, 0, buf.length, offsetRef.v);
       closeSync(fd);
-      logOffset = size;
+      offsetRef.v = size;
       const lines = buf.toString().split('\n').filter(l => l.trim()).map(l => l.replace(ANSI_RE, ''));
-      if (!lines.length) return;
-      const msg = enc.encode(`data: ${JSON.stringify(lines)}\n\n`);
-      for (const sub of logSubs) { try { sub(msg); } catch { logSubs.delete(sub); } }
+      if (lines.length) onLines(lines);
     } catch { /* skip */ }
   }, 2000);
+}
+
+function initLogTail() {
+  const broadcast = (lines: string[]) => {
+    if (!logSubs.size) return;
+    const msg = enc.encode(`data: ${JSON.stringify(lines)}\n\n`);
+    for (const sub of logSubs) { try { sub(msg); } catch { logSubs.delete(sub); } }
+  };
+  tailFile(path.join(LOGS_DIR, 'nanoclaw.log'),       { v: logOffset },    broadcast);
+  tailFile(path.join(LOGS_DIR, 'nanoclaw.error.log'), { v: errLogOffset }, broadcast);
 }
 
 // ─── HTTP server ─────────────────────────────────────────────────────────────
@@ -1023,10 +1069,16 @@ Bun.serve({
     if (pathname === '/api/data')
       return Response.json(await buildSnapshot());
     if (pathname === '/api/logs/history') {
-      const logFile = path.join(LOGS_DIR, 'nanoclaw.log');
-      if (!existsSync(logFile)) return Response.json({ lines: [] });
-      try { return Response.json({ lines: readFileSync(logFile, 'utf-8').split('\n').filter(l => l.trim()).slice(-400).map(l => l.replace(ANSI_RE, '')) }); }
-      catch { return Response.json({ lines: [] }); }
+      try {
+        const readLog = (f: string) => existsSync(f)
+          ? readFileSync(f, 'utf-8').split('\n').filter(l => l.trim()).map(l => l.replace(ANSI_RE, ''))
+          : [];
+        const main  = readLog(path.join(LOGS_DIR, 'nanoclaw.log'));
+        const error = readLog(path.join(LOGS_DIR, 'nanoclaw.error.log'));
+        // Merge and sort by line prefix (ISO timestamp), dedup exact duplicates
+        const all = [...new Set([...main, ...error])].sort().slice(-500);
+        return Response.json({ lines: all });
+      } catch { return Response.json({ lines: [] }); }
     }
     if (pathname === '/api/logs/stream') {
       let sub: ((c: Uint8Array) => void) | null = null;
@@ -1035,6 +1087,11 @@ Bun.serve({
         cancel() { if (sub) logSubs.delete(sub); },
       });
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' } });
+    }
+    if (pathname === '/insights/latest') {
+      const p = path.join(DATA_DIR, 'insights-latest.html');
+      if (existsSync(p)) return new Response(Bun.file(p), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+      return new Response('<p style="font-family:sans-serif;padding:2rem">Noch keine Insights generiert. Cron-Job ausführen: <code>scripts/claude-insights.sh</code></p>', { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     }
     return new Response('Not found', { status: 404 });
   },

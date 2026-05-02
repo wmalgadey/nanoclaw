@@ -362,7 +362,13 @@ export function createChatSdkBridge(config: ChatSdkBridgeConfig): ChannelAdapter
       }
 
       if (content.operation === 'reaction' && content.messageId && content.emoji) {
-        await adapter.addReaction(tid, content.messageId as string, content.emoji as string);
+        try {
+          await adapter.addReaction(tid, content.messageId as string, content.emoji as string);
+        } catch (err) {
+          // Telegram returns "message to react not found" when the target was deleted.
+          // Reactions are non-critical — log and continue rather than failing delivery.
+          log.warn('addReaction skipped', { messageId: content.messageId, err });
+        }
         return;
       }
 

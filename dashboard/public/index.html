@@ -110,13 +110,9 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
     <div id="rl-content" style="padding:12px 14px"></div>
   </div>
   <div class="grid" id="tok-summary"></div>
-  <div class="sec" style="margin-bottom:14px">
-    <div class="sh">Context Windows <span class="cnt" id="tok-sess-cnt"></span></div>
-    <div id="tok-windows" style="padding:12px 14px"></div>
-  </div>
   <div class="sec">
-    <div class="sh">Alle Sessions (letzte 30 Tage) <span class="cnt" id="tok-all-cnt"></span></div>
-    <table><thead><tr><th>Session / Projekt</th><th>Art</th><th>Turns</th><th>Input</th><th>Output</th><th>Cache Reads</th><th>Cache Hit %</th><th>Zuletzt</th></tr></thead>
+    <div class="sh">CLI Sessions (letzte 30 Tage) <span class="cnt" id="tok-all-cnt"></span></div>
+    <table><thead><tr><th>Projekt</th><th>Turns</th><th>Output</th><th>Cache Hit %</th><th>CTX %</th><th>Zuletzt</th></tr></thead>
     <tbody id="tok-table"></tbody></table>
   </div>
 </div>
@@ -182,11 +178,8 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 
 <!-- SESSIONS -->
 <div id="tab-sessions" class="tc">
-  <div class="sec">
-    <div class="sh">Sessions <span class="cnt" id="sess-cnt"></span></div>
-    <table><thead><tr><th>Session</th><th>Agent Group</th><th>Channel</th><th>Thread</th><th>Status</th><th>Container</th><th>Last Active</th><th>Heartbeat</th></tr></thead>
-    <tbody id="sess-body"></tbody></table>
-  </div>
+  <div class="sh" style="padding:0 0 10px">Sessions <span class="cnt" id="sess-cnt"></span></div>
+  <div id="sess-cards"></div>
 </div>
 
 <!-- CHANNELS -->
@@ -280,6 +273,8 @@ function renderAlerts(){
   if(aptOther>0) alerts.push({sev:'bl',cat:'Updates',msg:`${aptOther} Paketupdates verfügbar (apt)`});
   const snapN=updates?.snap?.count||0;
   if(snapN>0) alerts.push({sev:'bl',cat:'Updates',msg:`${snapN} Snap-Updates verfügbar`});
+  const brewN=(updates?.brew?.formulae?.length||0)+(updates?.brew?.casks?.length||0);
+  if(brewN>0) alerts.push({sev:'bl',cat:'Updates',msg:`${brewN} Homebrew-${brewN===1?'Update':'Updates'} verfügbar`});
 
   // Tailscale backend
   if(tailscale&&tailscale.backend!=='Running') alerts.push({sev:'rd',cat:'Tailscale',msg:`Backend nicht aktiv: ${tailscale.backend||'unbekannt'}`});
@@ -426,31 +421,61 @@ function renderRateLimits(){
   const el=document.getElementById('rl-content');
   if(!rl){el.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';return;}
 
-  function bar(label,tokens,limit,extra){
-    let html=`<div style="margin-bottom:10px">`;
+  const ctx=rl.context||{};
+
+  function bar(label,tokens,limit,ref,extra){
+    // ref = {value, label} for context bar when no limit set
+    let html=`<div style="margin-bottom:12px">`;
     html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">`;
     html+=`<span style="font-size:12px;font-weight:600">${label}</span>`;
-    html+=`<span style="font-size:12px">${fmtTok(tokens)}${limit>0?' / '+fmtTok(limit)+' tokens':' tokens'}</span>`;
-    html+=`</div>`;
     if(limit>0){
       const pct=Math.min(100,Math.round(tokens/limit*100));
-      html+=`<div class="brow" style="gap:8px"><div class="pb" style="flex:1"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div></div><span class="val">${pct}%</span></div>`;
+      html+=`<span style="font-size:12px">${fmtTok(tokens)} / ${fmtTok(limit)} <span class="mu">(${pct}%)</span></span>`;
+      html+=`</div>`;
+      html+=`<div class="pb"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div></div>`;
+    } else if(ref&&ref.value>0){
+      const pct=Math.min(100,Math.round(tokens/ref.value*100));
+      html+=`<span style="font-size:12px">${fmtTok(tokens)} <span class="mu">vs ${ref.label} ${fmtTok(ref.value)}</span></span>`;
+      html+=`</div>`;
+      html+=`<div class="pb"><div class="pf ${pbc(pct)}" style="width:${pct}%;opacity:.7"></div></div>`;
+    } else {
+      html+=`<span style="font-size:12px">${fmtTok(tokens)} tokens</span></div>`;
     }
-    if(extra){html+=extra;}
+    if(extra){html+=`<div style="margin-top:3px">${extra}</div>`;}
     html+=`</div>`;
     return html;
   }
 
-  const resetNote=rl.window5h.resetInMs>0?`<span class="mu" style="font-size:11px;margin-left:8px">Reset in ${fmtMs(rl.window5h.resetInMs)}</span>`:'';
+  const resetNote=rl.window5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${fmtMs(rl.window5h.resetInMs)}</span>`:'';
   let html='';
-  html+=bar('Letzte 5h (rolling)',rl.window5h.outputTokens,rl.limits.h5,resetNote);
-  html+=bar('Heute (UTC '+rl.daily.date+')',rl.daily.outputTokens,rl.limits.h24,null);
-  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null);
-  if(rl.extraOutput>0){
-    html+=`<div style="margin-top:8px;padding:7px 10px;background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.25);border-radius:6px;font-size:12px">`;
-    html+=`<span style="color:var(--yw)">⚡ Extra Usage: ${fmtTok(rl.extraOutput)} tokens</span>`;
-    html+=` <span class="mu" style="font-size:11px">— Kontingent überschritten</span></div>`;
+  html+=bar('Letzte 5h (rolling)',rl.window5h.outputTokens,rl.limits.h5,
+    ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null, resetNote);
+  html+=bar('Heute (UTC)',rl.daily.outputTokens,rl.limits.h24,
+    ctx.dailyAvg?{value:ctx.dailyAvg,label:'∅ 7d'}:null, null);
+  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null,
+    ctx.activeDays?`<span class="mu" style="font-size:11px">${ctx.activeDays} aktive Tage</span>`:null);
+
+  if(!rl.limits.h5&&!rl.limits.h24){
+    html+=`<div style="margin-top:4px;font-size:11px;color:var(--mu)">Kein Cap konfiguriert — Balken zeigen Vergleich zum historischen Peak / Ø.</div>`;
   }
+
+  // Extra usage status
+  const eu=rl.extraUsage||{};
+  if(eu.limited){
+    const resetIn=eu.resetTs?eu.resetTs-Date.now():0;
+    html+=`<div style="margin-top:10px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;display:flex;align-items:center;gap:10px">`;
+    html+=`<span style="font-size:16px">⛔</span>`;
+    html+=`<div><div style="font-weight:600;color:var(--rd)">Extra Usage erschöpft</div>`;
+    html+=`<div class="mu" style="font-size:11px">${eu.message||''} · Reset in <strong>${fmtMs(resetIn)}</strong></div></div>`;
+    html+=`</div>`;
+  } else if(eu.lastHitTs){
+    const ago=Date.now()-eu.lastHitTs;
+    html+=`<div style="margin-top:10px;font-size:11px;color:var(--mu)">Letzter Extra-Usage-Hit: ${fmtMs(ago)} ago</div>`;
+  }
+
+  // Insights link
+  html+=`<div style="margin-top:12px;font-size:12px"><a href="/insights/latest" target="_blank" style="color:var(--ac)">📊 Claude Insights Report öffnen</a> <span class="mu">(wöchentlich via Cron)</span></div>`;
+
   el.innerHTML=html;
 }
 
@@ -472,45 +497,24 @@ function renderTokens(){
   ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
 
   // Context windows — one bar per session
-  document.getElementById('tok-sess-cnt').textContent=sessions.length+' sessions';
-  const tokWin=document.getElementById('tok-windows');
-  if(!sessions.length){tokWin.innerHTML='<div class="mu" style="font-size:12px">Keine Sessions gefunden</div>';return;}
-
-  tokWin.innerHTML=sessions.map(s=>{
-    const ctx=s.contextTokens||0,pct=Math.min(100,s.contextPct||0),fill=Math.min(100,s.contextFill||0);
+  // CLI sessions only in the token table (agent sessions shown in Sessions tab)
+  const cliSessions=sessions.filter(s=>s.kind==='cli');
+  document.getElementById('tok-all-cnt').textContent=cliSessions.length+' CLI sessions';
+  document.getElementById('tok-table').innerHTML=cliSessions.map(s=>{
+    const pct=Math.min(100,s.contextPct||0),fill=Math.min(100,s.contextFill||0);
     const col=pct>=90?'crit':pct>=70?'warn':'ok';
-    const lbl=s.kind==='agent'?s.label.replace('ag-','ag…').slice(-30):s.label;
-    const kindBadge=s.kind==='agent'?badge('agent','p'):badge('cli','b');
-    return`<div style="margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:3px">
-        ${kindBadge}
-        <span style="font-size:12px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.label)}">${esc(lbl)}</span>
-        <span class="mu" style="font-size:11px">${fmtTok(ctx)} / ${fmtTok(compact)} tokens</span>
-        <span style="font-size:11px;font-weight:700;color:var(--${col==='crit'?'rd':col==='warn'?'yw':'gn'})">${pct}%</span>
-      </div>
-      <div style="display:flex;align-items:center;gap:6px">
-        <div class="pb" style="flex:1;height:8px"><div class="pf ${col}" style="width:${fill}%"></div></div>
-        <span class="mu" style="font-size:10px;width:60px;text-align:right">${fmtTok(s.totalOutput||0)} out · ${s.turns}t</span>
-        <span class="mu" style="font-size:10px;width:40px;text-align:right">${s.cacheHitPct}% hit</span>
-      </div>
-    </div>`;
-  }).join('');
-
-  // Full table
-  document.getElementById('tok-all-cnt').textContent=sessions.length+' total';
-  document.getElementById('tok-table').innerHTML=sessions.map(s=>`<tr>
-    <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.sessionId)}">
-      <span style="font-size:11px">${esc(s.kind==='agent'?s.label:s.label)}</span>
-      <div class="mono mu" style="font-size:10px">${esc(String(s.sessionId||'').slice(0,16))}…</div>
-    </td>
-    <td>${s.kind==='agent'?badge('agent','p'):badge('cli','b')}</td>
-    <td>${s.turns}</td>
-    <td class="mono">${fmtTok(s.totalInput||0)}</td>
-    <td class="mono">${fmtTok(s.totalOutput||0)}</td>
-    <td class="mono">${fmtTok(s.totalCacheRead||0)}</td>
-    <td><div style="display:flex;align-items:center;gap:5px"><div class="pb" style="width:50px"><div class="pf ok" style="width:${s.cacheHitPct}%"></div></div><span style="font-size:11px">${s.cacheHitPct}%</span></div></td>
-    <td class="mu" style="font-size:11px">${rel(s.lastTs)}</td>
-  </tr>`).join('')||'<tr><td colspan="8" class="empty">Keine Daten</td></tr>';
+    return`<tr>
+      <td style="max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(s.label)}">
+        <span style="font-size:11px">${esc(s.label)}</span>
+        <div class="mono mu" style="font-size:10px">${esc(String(s.sessionId||'').slice(0,16))}…</div>
+      </td>
+      <td>${s.turns}</td>
+      <td class="mono">${fmtTok(s.totalOutput||0)}</td>
+      <td><div style="display:flex;align-items:center;gap:5px"><div class="pb" style="width:50px"><div class="pf ok" style="width:${s.cacheHitPct}%"></div></div><span style="font-size:11px">${s.cacheHitPct}%</span></div></td>
+      <td><div style="display:flex;align-items:center;gap:4px"><div class="pb" style="width:50px"><div class="pf ${col}" style="width:${fill}%"></div></div><span style="font-size:11px;color:var(--${col==='crit'?'rd':col==='warn'?'yw':'mu'})">${pct}%</span></div></td>
+      <td class="mu" style="font-size:11px">${rel(s.lastTs)}</td>
+    </tr>`;
+  }).join('')||'<tr><td colspan="6" class="empty">Keine CLI-Sessions</td></tr>';
 }
 
 function renderLogMetrics(){
@@ -606,7 +610,7 @@ function renderOverview(){
 function renderSystem(){
   const sys=D.system||{};
   const {memory:mem,cpu,load,uptime,network,diskIo,os,disk,updates,tailscale}=sys;
-  const apt=updates?.apt,snap=updates?.snap;
+  const apt=updates?.apt,snap=updates?.snap,brew=updates?.brew;
 
   // top stat cards
   document.getElementById('sys-cards').innerHTML=[
@@ -646,22 +650,34 @@ function renderSystem(){
 
   // updates
   const uEl=document.getElementById('updates-detail');
-  const aptCount=apt?.count||0,aptSec=apt?.security||0,aptEsm=apt?.esm||0,snapCount=snap?.count||0;
-  uEl.innerHTML=`
-    <div style="margin-bottom:10px">
-      <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
-        ${badge('apt','b')} <span style="font-size:16px;font-weight:700;${aptCount>0?'color:var(--yw)':'color:var(--gn)'}">${aptCount}</span>
-        <span class="mu" style="font-size:12px">upgradable</span>
-        ${aptSec>0?`<span class="mu" style="font-size:11px">(${aptSec} security)</span>`:''}
-      </div>
+  const aptCount=apt?.count||0,aptSec=apt?.security||0,snapCount=snap?.count||0;
+  const brewF=(brew?.formulae||[]).length,brewC=(brew?.casks||[]).length,brewTotal=brewF+brewC;
 
-      <div style="display:flex;align-items:center;gap:8px">
-        ${badge('snap','x')} <span style="font-size:16px;font-weight:700;${snapCount>0?'color:var(--yw)':'color:var(--gn)'}">${snapCount}</span>
-        <span class="mu" style="font-size:12px">refreshable</span>
-      </div>
-    </div>
-    ${snap?.snaps?.length?`<div style="margin-top:8px;font-size:11px;color:var(--mu)">${snap.snaps.map(s=>esc(s.name)+' → '+esc(s.version)).join('<br>')}</div>`:''}
-    ${apt&&!aptCount&&!aptSec&&!snapCount?'<div class="mu" style="font-size:11px;margin-top:8px">✓ All packages up to date</div>':''}`;
+  function pkgRow(pkgBadge,count,label,extra=''){
+    const col=count>0?'color:var(--yw)':'color:var(--gn)';
+    return`<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      ${pkgBadge}
+      <span style="font-size:16px;font-weight:700;${col}">${count}</span>
+      <span class="mu" style="font-size:12px">${label}</span>
+      ${extra}
+    </div>`;
+  }
+
+  let brewDetail='';
+  if(brew&&brewTotal>0){
+    const rows=[...brew.formulae.map(f=>`${esc(f.name)} <span class="mu">${esc(f.installed)} → <strong>${esc(f.current)}</strong></span>`),...brew.casks.map(c=>`${esc(c.name)} ${badge('cask','p')} <span class="mu">${esc(c.installed)} → <strong>${esc(c.current)}</strong></span>`)];
+    brewDetail=`<div style="margin-top:6px;padding-left:4px;font-size:11px;line-height:1.8">${rows.join('<br>')}</div>`;
+  }
+  const brewTs=brew?.timestamp?`<span class="mu" style="font-size:10px">Stand: ${rel(brew.timestamp)}</span>`:'';
+
+  uEl.innerHTML=`
+    ${pkgRow(badge('apt','b'),aptCount,'upgradable',aptSec>0?`<span class="mu" style="font-size:11px">(${aptSec} security)</span>`:'')}
+    ${pkgRow(badge('snap','x'),snapCount,'refreshable')}
+    ${pkgRow(badge('brew','g'),brewTotal,'outdated',brewTs)}
+    ${snap?.snaps?.length?`<div style="margin-left:60px;font-size:11px;color:var(--mu);margin-bottom:4px">${snap.snaps.map(s=>esc(s.name)+' → '+esc(s.version)).join('<br>')}</div>`:''}
+    ${brewDetail}
+    ${!aptCount&&!aptSec&&!snapCount&&!brewTotal?'<div class="mu" style="font-size:11px;margin-top:4px">✓ All packages up to date</div>':''}`;
+
 
   // OS info
   const osEl=document.getElementById('os-detail');
@@ -727,8 +743,100 @@ function renderSystem(){
 // ── sessions ─────────────────────────────────────────────────────────────────
 function renderSessions(){
   const sess=D.sessions||[];
-  document.getElementById('sess-cnt').textContent=sess.length+' total';
-  document.getElementById('sess-body').innerHTML=sess.map(s=>{const sd=(D.session_data||[]).find(d=>d.sessionId===s.id);return`<tr><td class="mono">${esc(s.id?.slice(-20))}</td><td>${esc(s.agent_group_name||s.agent_group_id)}</td><td>${s.channel_type?badge(s.channel_type,'b'):'–'}</td><td class="mono mu">${esc(s.thread_id||'–')}</td><td>${sbadge(s.status)}</td><td>${sbadge(s.container_status)}</td><td class="mu">${rel(s.last_active)}</td><td class="mu">${sd?.heartbeatMs?relMs(sd.heartbeatMs):'–'}</td></tr>`;}).join('')||'<tr><td colspan="8" class="empty">No sessions</td></tr>';
+  document.getElementById('sess-cnt').textContent=sess.length+' sessions';
+  const now=Date.now();
+  const compact=165000,full=200000;
+
+  document.getElementById('sess-cards').innerHTML=sess.map(s=>{
+    const sd=(D.session_data||[]).find(d=>d.sessionId===s.id);
+    const mm=sd?.msgMetrics;
+    // Match token metrics by agent_group_id
+    const tok=(D.token_metrics?.sessions||[]).find(t=>t.kind==='agent'&&t.agentGroupId===s.agent_group_id)||null;
+
+    // State badge
+    const running=s.container_status==='running';
+    const idle=s.container_status==='idle';
+    const stateBadge=running?badge('running','g'):idle?badge('idle','b'):badge('stopped','x');
+
+    // Timestamps
+    const createdMs=s.created_at?new Date(s.created_at).getTime():null;
+    const lastMsgMs=mm?.lastActivityMs||(s.last_active?new Date(s.last_active).getTime():null);
+    const createdStr=createdMs?new Date(createdMs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'–';
+
+    // Session age
+    let ageStr='–';
+    if(createdMs){
+      const endMs=running?now:(lastMsgMs||now);
+      const ms=endMs-createdMs;
+      const d=Math.floor(ms/86400000),h=Math.floor((ms%86400000)/3600000),m=Math.floor((ms%3600000)/60000);
+      ageStr=d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;
+    }
+
+    // Context bar (from token metrics)
+    let ctxHtml='';
+    if(tok){
+      const pct=Math.min(100,tok.contextPct||0),fill=Math.min(100,tok.contextFill||0);
+      const col=pct>=90?'crit':pct>=70?'warn':'ok';
+      const colVar=col==='crit'?'rd':col==='warn'?'yw':'gn';
+      ctxHtml=`<div style="margin-top:10px">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
+          <span class="mu" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px">Context Window</span>
+          <span style="font-size:11px;font-weight:700;color:var(--${colVar})">${pct}% <span class="mu" style="font-weight:400">von 165k compact / ${fmtTok(tok.contextTokens||0)} tokens</span></span>
+        </div>
+        <div class="pb"><div class="pf ${col}" style="width:${fill}%"></div></div>
+      </div>`;
+    }
+
+    // Token stats row
+    let tokHtml='';
+    if(tok){
+      tokHtml=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px">
+        <span class="mu">Out <strong style="color:var(--tx)">${fmtTok(tok.totalOutput||0)}</strong></span>
+        <span class="mu">In <strong style="color:var(--tx)">${fmtTok(tok.totalInput||0)}</strong></span>
+        <span class="mu">Cache Hit <strong style="color:var(--${(tok.cacheHitPct||0)>=60?'gn':(tok.cacheHitPct||0)>=30?'yw':'rd'})">${tok.cacheHitPct||0}%</strong></span>
+        <span class="mu">Turns <strong style="color:var(--tx)">${tok.turns||0}</strong></span>
+        ${tok.lastTs?`<span class="mu">Session aktiv ${rel(tok.lastTs)}</span>`:''}
+      </div>`;
+    }
+
+    // Message stats
+    let msgHtml='–';
+    if(mm){
+      msgHtml=`<span style="color:${mm.today>0?'var(--gn)':'var(--mu)'}"><strong>${mm.today}</strong> heute</span>`
+        +`<span class="mu"> · ${mm.last7d} diese Woche · ${mm.total} gesamt</span>`
+        +(mm.pending>0?` · <span style="color:var(--yw)">${mm.pending} ausstehend</span>`:'')
+        +(mm.medianResponseMs?` · ⌀ ${fmtMs2(mm.medianResponseMs)} Antwortzeit`:'');
+    }
+
+    // Heartbeat
+    const hb=sd?.heartbeatMs;
+    const hbStr=hb?relMs(hb):'–';
+    const hbColor=hb&&(now-hb)<300000?'var(--gn)':hb&&(now-hb)<86400000?'var(--mu)':'var(--rd)';
+
+    return`<div class="sec" style="margin-bottom:12px;padding:14px 16px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong style="font-size:14px">${esc(s.agent_group_name||s.agent_group_id)}</strong>
+            ${stateBadge}
+            ${s.channel_type?badge(s.channel_type,'b'):''}
+          </div>
+          <div class="mono mu" style="font-size:10px;margin-top:2px">${esc(s.id||'')}</div>
+        </div>
+        <div style="text-align:right;font-size:12px;flex-shrink:0">
+          <div class="mu">Erstellt <strong style="color:var(--tx)">${createdStr}</strong></div>
+          <div class="mu">Alter <strong style="color:var(--tx)">${ageStr}</strong></div>
+          ${hb?`<div style="color:${hbColor};font-size:11px">Heartbeat ${hbStr}</div>`:''}
+        </div>
+      </div>
+      ${ctxHtml}
+      ${tokHtml}
+      <div style="margin-top:8px;font-size:12px;padding-top:8px;border-top:1px solid var(--bd)">
+        <span class="mu" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-right:8px">Nachrichten</span>${msgHtml}
+        ${lastMsgMs?`<span class="mu" style="font-size:11px;margin-left:12px">Letzte: ${rel(new Date(lastMsgMs).toISOString())}</span>`:''}
+      </div>
+    </div>`;
+  }).join('')||'<div class="empty">Keine Sessions</div>';
 }
 
 // ── channels ─────────────────────────────────────────────────────────────────
