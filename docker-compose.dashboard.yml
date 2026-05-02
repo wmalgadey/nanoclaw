@@ -1,0 +1,33 @@
+services:
+  nanoclaw-dashboard:
+    build: ./dashboard
+    container_name: nanoclaw-dashboard
+    ports:
+      - "3100:3100"
+    volumes:
+      # NanoClaw data (not :ro — SQLite WAL mode needs shm access)
+      - ./data:/data
+      # Nanoclaw logs
+      - ./logs:/logs:ro
+      # Docker socket — container list, stats, images, networks
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Host /proc — CPU, memory, load, network I/O
+      - /proc:/host/proc:ro
+      # Host OS info — follow symlink to the real file
+      - /usr/lib/os-release:/host/etc/os-release:ro
+      # Tailscale local API socket
+      - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock:ro
+      # apt update-notifier file
+      - /var/lib/update-notifier:/host/update-notifier:ro
+      # snapd REST API socket
+      - /run/snapd.socket:/run/snapd.socket:ro
+      # Claude Code CLI session files (token data for host sessions)
+      - /home/paranoid/.claude/projects:/host/claude-projects:ro
+    environment:
+      DATA_DIR: /data
+      LOGS_DIR: /logs
+      DASHBOARD_PORT: "3100"
+      HOST_PROC: /host/proc
+      HOST_ETC: /host/etc
+      CLAUDE_PROJECTS_DIR: /host/claude-projects
+    restart: unless-stopped
