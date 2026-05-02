@@ -575,11 +575,13 @@ function renderOverview(){
   const updCount=(apt?.count||0)+(snap?.count||0);
   const tm=D.token_metrics||{};
   const tmOut=tm.totalOutput||0,tmCR=tm.overallCacheHit??'–';
+  const msgsToday=(D.session_data||[]).reduce((sum,sd)=>sum+((sd.msgMetrics?.today)||0),0);
   document.getElementById('stats').innerHTML=[
     {t:'Agent Groups',      v:(D.agent_groups||[]).length},
     {t:'Active Sessions',   v:active.length,c:active.length?'gn':''},
     {t:'NanoClaw Containers',v:ncRun.length,c:ncRun.length?'gn':''},
     {t:'All Running',       v:cts.filter(c=>c.state==='running').length},
+    {t:'Messages Today',    v:msgsToday,c:msgsToday>0?'bl':''},
     {t:'CPU',               v:(sys.cpu?.overall??'–')+'%',c:sys.cpu?.overall>=80?'rd':sys.cpu?.overall>=60?'yw':'gn'},
     {t:'RAM Used',          v:sys.memory?fmtB(sys.memory.used):'–'},
     {t:'Output Tokens',     v:fmtTok(tmOut)},
@@ -746,8 +748,69 @@ function renderUsers(){
 
 // ── messages ─────────────────────────────────────────────────────────────────
 function refreshMsgList(){const sel=document.getElementById('sess-sel'),prev=sel.value;sel.innerHTML='<option value="">Select a session…</option>'+(D.session_data||[]).map(s=>`<option value="${esc(s.agentGroupId+'|'+s.sessionId)}">${esc(s.agentGroupId)} / ${esc(s.sessionId)}</option>`).join('');if(prev)sel.value=prev;renderMsgs();}
-function renderMsgs(){const sel=document.getElementById('sess-sel'),el=document.getElementById('msg-content');if(!sel.value||!D){el.innerHTML='';return;}const[agId,sessId]=sel.value.split('|'),sd=(D.session_data||[]).find(s=>s.agentGroupId===agId&&s.sessionId===sessId);if(!sd){el.innerHTML='<div class="empty">Not found</div>';return;}const tbl=(rows,cols)=>!rows.length?'<div class="empty">No messages</div>':`<table><thead><tr>${cols.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(m=>`<tr><td class="mono">${esc(m.seq)}</td><td>${badge(m.kind||'?','b')}</td><td>${sbadge(m.status||m.channel_type||'–')}</td><td class="mu">${rel(m.timestamp)}</td><td><div class="msgbox">${esc(parse(m.content))}</div></td></tr>`).join('')}</tbody></table>`;
-el.innerHTML=`<div class="two"><div class="sec"><div class="sh">Inbound <span class="cnt">${sd.inbound.length}</span></div>${tbl(sd.inbound,['Seq','Kind','Status','Time','Content'])}</div><div class="sec"><div class="sh">Outbound <span class="cnt">${sd.outbound.length}</span></div>${tbl(sd.outbound,['Seq','Kind','Channel','Time','Content'])}</div></div>${sd.destinations?.length?`<div class="sec" style="margin-top:12px"><div class="sh">Destinations</div><table><thead><tr><th>Name</th><th>Type</th><th>Channel</th><th>Target</th></tr></thead><tbody>${sd.destinations.map(d=>`<tr><td>${esc(d.name)}</td><td>${badge(d.type,'b')}</td><td>${d.channel_type?badge(d.channel_type,'x'):'–'}</td><td class="mono mu">${esc(d.platform_id||d.agent_group_id||'–')}</td></tr>`).join('')}</tbody></table></div>`:''}${sd.sessionState?.length?`<div class="sec" style="margin-top:12px"><div class="sh">Session State</div><table><thead><tr><th>Key</th><th>Value</th><th>Updated</th></tr></thead><tbody>${sd.sessionState.map(r=>`<tr><td class="mono">${esc(r.key)}</td><td><div class="msgbox">${esc(r.value)}</div></td><td class="mu">${rel(r.updated_at)}</td></tr>`).join('')}</tbody></table></div>`:''}${sd.processingAck?.length?`<div class="sec" style="margin-top:12px"><div class="sh">Processing ACK</div><table><thead><tr><th>Message ID</th><th>Status</th><th>Changed</th></tr></thead><tbody>${sd.processingAck.map(r=>`<tr><td class="mono">${esc(r.message_id)}</td><td>${sbadge(r.status)}</td><td class="mu">${rel(r.status_changed)}</td></tr>`).join('')}</tbody></table></div>`:''}`;}
+function fmtMs2(ms){if(ms===null||ms===undefined)return'–';if(ms<1000)return ms+'ms';if(ms<60000)return(ms/1000).toFixed(1)+'s';return Math.round(ms/60000)+'m';}
+function renderMsgs(){
+  const sel=document.getElementById('sess-sel'),el=document.getElementById('msg-content');
+  if(!sel.value||!D){el.innerHTML='';return;}
+  const[agId,sessId]=sel.value.split('|');
+  const sd=(D.session_data||[]).find(s=>s.agentGroupId===agId&&s.sessionId===sessId);
+  if(!sd){el.innerHTML='<div class="empty">Not found</div>';return;}
+  const mm=sd.msgMetrics||(D.msg_metrics||{})[sessId];
+  if(!mm){el.innerHTML='<div class="empty">No messages yet</div>';return;}
+
+  // Stats row
+  const statsRow=[
+    {t:'Total Messages',v:mm.total},
+    {t:'Today',v:mm.today},
+    {t:'Pending',v:mm.pending,c:mm.pending>0?'yw':''},
+    {t:'Avg Response',v:fmtMs2(mm.medianResponseMs)},
+  ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
+
+  // 24h activity bar chart — byHour is indexed by UTC hour 0-23
+  const maxH=Math.max(1,...(mm.byHour||[]));
+  const bars=(mm.byHour||[]).map((cnt,h)=>{
+    const hpx=Math.round(cnt/maxH*60);
+    const label=String(h).padStart(2,'0');
+    return`<div style="display:flex;flex-direction:column;align-items:center;gap:2px;flex:1;min-width:0">
+      <div style="height:60px;display:flex;align-items:flex-end">
+        <div style="width:100%;height:${hpx}px;background:var(--ac);border-radius:2px 2px 0 0;min-height:${cnt?2:0}px" title="${label}:00 — ${cnt} msg"></div>
+      </div>
+      <span style="font-size:9px;color:var(--mu)">${label}</span>
+    </div>`;
+  }).join('');
+
+  // byKind
+  const kinds=mm.byKind||{};
+  const kindHtml=Object.entries(kinds).map(([k,v])=>`<span class="mu" style="font-size:12px">${badge(k,'b')} <strong style="color:var(--tx)">${v}</strong></span>`).join('  ');
+
+  // recentMessages
+  const recRows=(mm.recentMessages||[]).map(m=>`<tr>
+    <td class="mu" style="font-size:11px;white-space:nowrap">${m.timestamp?new Date(m.timestamp).toLocaleTimeString():'–'}</td>
+    <td>${badge(m.kind||'?','b')}</td>
+    <td style="font-size:12px;max-width:400px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(m.text||'')}</td>
+  </tr>`).join('');
+
+  // deliveryErrors
+  const errHtml=mm.deliveryErrors>0?`<div style="margin-top:10px;padding:7px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);border-radius:6px;font-size:12px;color:var(--rd)">⚠ ${mm.deliveryErrors} delivery error${mm.deliveryErrors!==1?'s':''}</div>`:'';
+
+  el.innerHTML=`
+    <div class="grid">${statsRow}</div>
+    <div class="sec" style="margin-bottom:14px">
+      <div class="sh">24h Activity <span class="cnt">${mm.last7d} last 7d</span></div>
+      <div style="padding:10px 14px">
+        <div style="display:flex;gap:2px;align-items:flex-end">${bars}</div>
+      </div>
+    </div>
+    <div class="sec" style="margin-bottom:14px">
+      <div class="sh">Message Kinds</div>
+      <div style="padding:10px 14px;display:flex;flex-wrap:wrap;gap:16px">${kindHtml||'<span class="mu">No messages</span>'}</div>
+    </div>
+    <div class="sec" style="margin-bottom:14px">
+      <div class="sh">Recent Messages <span class="cnt">last 5</span></div>
+      ${recRows?`<table><thead><tr><th>Time</th><th>Kind</th><th>Message</th></tr></thead><tbody>${recRows}</tbody></table>`:'<div class="empty">No messages</div>'}
+    </div>
+    ${errHtml}`;
+}
 
 // ── logs ──────────────────────────────────────────────────────────────────────
 let logsStarted=false,allLines=[];

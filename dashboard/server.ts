@@ -572,6 +572,187 @@ function collectTokenMetrics() {
   return { sessions, totalInput, totalOutput, totalCacheRead, totalCacheCreate, overallCacheHit };
 }
 
+// ─── Message metrics ─────────────────────────────────────────────────────────
+
+interface MsgMetrics {
+  total:            number;
+  today:            number;
+  last7d:           number;
+  pending:          number;
+  byHour:           number[];          // [24] count per UTC hour, last 24h
+  byKind:           Record<string, number>;
+  medianResponseMs: number | null;
+  deliveryErrors:   number;
+  lastActivityMs:   number | null;
+  recentMessages:   { timestamp: number; kind: string; text: string }[];
+}
+
+function extractText(content: string): string {
+  if (!content) return '';
+  try {
+    const p = JSON.parse(content);
+    if (typeof p === 'string') return p.slice(0, 80);
+    if (p && typeof p.text === 'string') return p.text.slice(0, 80);
+    if (Array.isArray(p)) {
+      const texts = p.filter((x: unknown) => (x as Record<string, unknown>)?.type === 'text').map((x: unknown) => (x as Record<string, string>).text);
+      if (texts.length) return texts.join(' ').slice(0, 80);
+    }
+    return JSON.stringify(p).slice(0, 80);
+  } catch { return content.slice(0, 80); }
+}
+
+function computeMsgMetrics(inDbPath: string, outDbPath: string): MsgMetrics | null {
+  try {
+    const now = Date.now();
+    const todayUtcMs = now - (now % 86400000);
+    const last7dMs   = now - 7 * 86400000;
+    const last24hMs  = now - 86400000;
+
+    // ── inbound queries ──────────────────────────────────────────────────────
+    let inDb: Database | null = null;
+    let total = 0, today = 0, last7d = 0, pending = 0;
+    const byHour: number[] = new Array(24).fill(0);
+    const byKind: Record<string, number> = {};
+    let lastInMs: number | null = null;
+    let recentMessages: { timestamp: number; kind: string; text: string }[] = [];
+
+    if (existsSync(inDbPath)) {
+      try {
+        inDb = new Database(inDbPath, { readonly: true });
+
+        // Total (excluding system)
+        const totRow = inDb.query<{ cnt: number }, []>(
+          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system'"
+        ).get();
+        total = totRow?.cnt ?? 0;
+
+        // Today
+        const todayRow = inDb.query<{ cnt: number }, [number]>(
+          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?"
+        ).get(todayUtcMs);
+        today = todayRow?.cnt ?? 0;
+
+        // Last 7 days
+        const last7Row = inDb.query<{ cnt: number }, [number]>(
+          "SELECT COUNT(*) AS cnt FROM messages_in WHERE kind != 'system' AND timestamp >= ?"
+        ).get(last7dMs);
+        last7d = last7Row?.cnt ?? 0;
+
+        // Pending
+        const pendRow = inDb.query<{ cnt: number }, []>(
+          "SELECT COUNT(*) AS cnt FROM messages_in WHERE status = 'pending'"
+        ).get();
+        pending = pendRow?.cnt ?? 0;
+
+        // byHour — last 24h
+        const hourRows = inDb.query<{ ts: number }, [number]>(
+          "SELECT timestamp AS ts FROM messages_in WHERE timestamp >= ?"
+        ).all(last24hMs);
+        for (const row of hourRows) {
+          const hourIdx = new Date(row.ts).getUTCHours();
+          byHour[hourIdx] = (byHour[hourIdx] ?? 0) + 1;
+        }
+
+        // byKind
+        const kindRows = inDb.query<{ kind: string; cnt: number }, []>(
+          "SELECT kind, COUNT(*) AS cnt FROM messages_in GROUP BY kind"
+        ).all();
+        for (const row of kindRows) { byKind[row.kind] = row.cnt; }
+
+        // lastActivityMs
+        const lastInRow = inDb.query<{ mx: number | null }, []>(
+          "SELECT MAX(timestamp) AS mx FROM messages_in"
+        ).get();
+        lastInMs = lastInRow?.mx ?? null;
+
+        // recentMessages
+        const recRows = inDb.query<{ timestamp: number; kind: string; content: string }, []>(
+          "SELECT timestamp, kind, content FROM messages_in ORDER BY timestamp DESC LIMIT 5"
+        ).all();
+        recentMessages = recRows.map(r => ({
+          timestamp: r.timestamp,
+          kind:      r.kind ?? '',
+          text:      extractText(r.content),
+        }));
+      } finally {
+        try { inDb?.close(); } catch {}
+      }
+    }
+
+    // ── outbound queries ─────────────────────────────────────────────────────
+    let outDb: Database | null = null;
+    let deliveryErrors = 0;
+    let lastOutMs: number | null = null;
+    let outTimestamps: number[] = [];
+
+    if (existsSync(outDbPath)) {
+      try {
+        outDb = new Database(outDbPath, { readonly: true });
+
+        // deliveryErrors
+        const deRow = outDb.query<{ cnt: number }, []>(
+          "SELECT COUNT(*) AS cnt FROM messages_out WHERE delivered IS NOT NULL AND json_extract(delivered, '$.status') != 'delivered'"
+        ).get();
+        deliveryErrors = deRow?.cnt ?? 0;
+
+        // lastActivityMs for outbound
+        const lastOutRow = outDb.query<{ mx: number | null }, []>(
+          "SELECT MAX(timestamp) AS mx FROM messages_out"
+        ).get();
+        lastOutMs = lastOutRow?.mx ?? null;
+
+        // outbound timestamps for median response time
+        const outRows = outDb.query<{ ts: number }, []>(
+          "SELECT timestamp AS ts FROM messages_out ORDER BY timestamp ASC"
+        ).all();
+        outTimestamps = outRows.map(r => r.ts);
+      } finally {
+        try { outDb?.close(); } catch {}
+      }
+    }
+
+    // ── medianResponseMs ─────────────────────────────────────────────────────
+    let medianResponseMs: number | null = null;
+    if (existsSync(inDbPath) && outTimestamps.length > 0) {
+      let inDb2: Database | null = null;
+      try {
+        inDb2 = new Database(inDbPath, { readonly: true });
+        const inRows = inDb2.query<{ ts: number }, []>(
+          "SELECT timestamp AS ts FROM messages_in WHERE kind != 'system' ORDER BY timestamp ASC"
+        ).all();
+        const inTs = inRows.map(r => r.ts);
+
+        // Pair each inbound message with the first outbound message that comes after it
+        const deltas: number[] = [];
+        let outIdx = 0;
+        for (const its of inTs) {
+          while (outIdx < outTimestamps.length && outTimestamps[outIdx] <= its) outIdx++;
+          if (outIdx < outTimestamps.length) {
+            deltas.push(outTimestamps[outIdx] - its);
+          }
+        }
+        if (deltas.length > 0) {
+          deltas.sort((a, b) => a - b);
+          const mid = Math.floor(deltas.length / 2);
+          medianResponseMs = deltas.length % 2 === 0
+            ? Math.round((deltas[mid - 1] + deltas[mid]) / 2)
+            : deltas[mid];
+        }
+      } finally {
+        try { inDb2?.close(); } catch {}
+      }
+    }
+
+    // ── lastActivityMs ───────────────────────────────────────────────────────
+    let lastActivityMs: number | null = null;
+    if (lastInMs !== null && lastOutMs !== null) lastActivityMs = Math.max(lastInMs, lastOutMs);
+    else if (lastInMs !== null) lastActivityMs = lastInMs;
+    else if (lastOutMs !== null) lastActivityMs = lastOutMs;
+
+    return { total, today, last7d, pending, byHour, byKind, medianResponseMs, deliveryErrors, lastActivityMs, recentMessages };
+  } catch { return null; }
+}
+
 // ─── Session data ────────────────────────────────────────────────────────────
 
 function collectSessionData() {
@@ -596,6 +777,7 @@ function collectSessionData() {
         sessionState:  qSession(outDb, 'SELECT * FROM session_state'),
         destinations:  qSession(inDb,  'SELECT * FROM destinations'),
         heartbeatMs: hbMs,
+        msgMetrics:  computeMsgMetrics(inDb, outDb),
       });
     }
   }
@@ -694,7 +876,15 @@ async function buildSnapshot() {
   snap.docker_images   = dockerImages;
   snap.docker_networks = dockerNetworks;
   snap.docker_volumes  = dockerVolumes;
-  snap.session_data    = collectSessionData();
+  const sessionData    = collectSessionData();
+  snap.session_data    = sessionData;
+  // msg_metrics: keyed by sessionId for quick lookup in the frontend
+  const msgMetricsMap: Record<string, unknown> = {};
+  for (const sd of sessionData) {
+    if ((sd as Record<string, unknown>).msgMetrics != null)
+      msgMetricsMap[(sd as Record<string, unknown>).sessionId as string] = (sd as Record<string, unknown>).msgMetrics;
+  }
+  snap.msg_metrics = msgMetricsMap;
   snap.token_metrics   = tokenMetrics;
   snap.system = {
     memory:  collectMemory(),
