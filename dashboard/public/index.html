@@ -105,6 +105,10 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 
 <!-- TOKENS -->
 <div id="tab-tokens" class="tc">
+  <div class="sec" style="margin-bottom:14px" id="rl-section">
+    <div class="sh">Rate-Limit-Fenster</div>
+    <div id="rl-content" style="padding:12px 14px"></div>
+  </div>
   <div class="grid" id="tok-summary"></div>
   <div class="sec" style="margin-bottom:14px">
     <div class="sh">Context Windows <span class="cnt" id="tok-sess-cnt"></span></div>
@@ -415,8 +419,44 @@ function renderAgents(){
   }).join('');
 }
 
+// ── rate limits ───────────────────────────────────────────────────────────────
+function fmtMs(ms){const h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000);return h>0?`${h}h ${m}m`:`${m}m`;}
+function renderRateLimits(){
+  const rl=D.rate_limits;
+  const el=document.getElementById('rl-content');
+  if(!rl){el.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';return;}
+
+  function bar(label,tokens,limit,extra){
+    let html=`<div style="margin-bottom:10px">`;
+    html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">`;
+    html+=`<span style="font-size:12px;font-weight:600">${label}</span>`;
+    html+=`<span style="font-size:12px">${fmtTok(tokens)}${limit>0?' / '+fmtTok(limit)+' tokens':' tokens'}</span>`;
+    html+=`</div>`;
+    if(limit>0){
+      const pct=Math.min(100,Math.round(tokens/limit*100));
+      html+=`<div class="brow" style="gap:8px"><div class="pb" style="flex:1"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div></div><span class="val">${pct}%</span></div>`;
+    }
+    if(extra){html+=extra;}
+    html+=`</div>`;
+    return html;
+  }
+
+  const resetNote=rl.window5h.resetInMs>0?`<span class="mu" style="font-size:11px;margin-left:8px">Reset in ${fmtMs(rl.window5h.resetInMs)}</span>`:'';
+  let html='';
+  html+=bar('Letzte 5h (rolling)',rl.window5h.outputTokens,rl.limits.h5,resetNote);
+  html+=bar('Heute (UTC '+rl.daily.date+')',rl.daily.outputTokens,rl.limits.h24,null);
+  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null);
+  if(rl.extraOutput>0){
+    html+=`<div style="margin-top:8px;padding:7px 10px;background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.25);border-radius:6px;font-size:12px">`;
+    html+=`<span style="color:var(--yw)">⚡ Extra Usage: ${fmtTok(rl.extraOutput)} tokens</span>`;
+    html+=` <span class="mu" style="font-size:11px">— Kontingent überschritten</span></div>`;
+  }
+  el.innerHTML=html;
+}
+
 // ── tokens ────────────────────────────────────────────────────────────────────
 function renderTokens(){
+  renderRateLimits();
   const tm=D.token_metrics||{};
   const sessions=(tm.sessions||[]);
   const compact=165000,full=200000;

@@ -30,4 +30,7 @@ services:
       HOST_PROC: /host/proc
       HOST_ETC: /host/etc
       CLAUDE_PROJECTS_DIR: /host/claude-projects
+      CLAUDE_5H_OUTPUT_LIMIT: "0"      # 0 = kein Cap konfiguriert (anpassen: 88000 für Max 5x, 352000 für Max 20x)
+      CLAUDE_DAILY_OUTPUT_LIMIT: "0"
+      CLAUDE_WEEKLY_OUTPUT_LIMIT: "0"
     restart: unless-stopped

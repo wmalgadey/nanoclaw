@@ -344,6 +344,112 @@ async function collectContainers() {
   return containers;
 }
 
+// ─── Rate-limit metrics ──────────────────────────────────────────────────────
+
+const LIMIT_5H  = parseInt(process.env.CLAUDE_5H_OUTPUT_LIMIT    || '0');
+const LIMIT_24H = parseInt(process.env.CLAUDE_DAILY_OUTPUT_LIMIT  || '0');
+const LIMIT_7D  = parseInt(process.env.CLAUDE_WEEKLY_OUTPUT_LIMIT || '0');
+
+function collectRateLimitMetrics() {
+  const now = Date.now();
+  const window5hMs  = 5  * 3600000;
+  const window24hMs = 24 * 3600000;
+  const window7dMs  = 7  * 86400000;
+
+  // UTC midnight of today
+  const todayUtcMs = now - (now % 86400000);
+
+  let out5h    = 0;
+  let out24h   = 0;
+  let out7d    = 0;
+  let extraOut = 0;
+
+  // Oldest token timestamp inside 5h window — used to compute resetInMs
+  let oldest5hTs: number | null = null;
+
+  function scanFile(filePath: string) {
+    try {
+      const lines = readFileSync(filePath, 'utf-8').split('\n');
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const e = JSON.parse(line);
+          if (e.type !== 'assistant' || !e.message?.usage || !e.timestamp) continue;
+          const ts = new Date(e.timestamp).getTime();
+          if (isNaN(ts)) continue;
+          const outputTokens: number = e.message.usage.output_tokens || 0;
+          const tier: string = e.message.usage.service_tier || 'standard';
+          const age = now - ts;
+
+          if (age <= window7dMs) {
+            out7d += outputTokens;
+            if (age <= window24hMs) {
+              out24h += outputTokens;
+              if (age <= window5hMs) {
+                out5h += outputTokens;
+                if (oldest5hTs === null || ts < oldest5hTs) oldest5hTs = ts;
+              }
+            }
+          }
+          if (tier !== 'standard') extraOut += outputTokens;
+        } catch {}
+      }
+    } catch {}
+  }
+
+  // NanoClaw agent sessions
+  const sessDir = path.join(DATA_DIR, 'v2-sessions');
+  if (existsSync(sessDir)) {
+    let agDirs: string[] = [];
+    try { agDirs = readdirSync(sessDir).filter(d => d.startsWith('ag-')); } catch {}
+    for (const ag of agDirs) {
+      const claudeDir = path.join(sessDir, ag, '.claude-shared/projects/-workspace-agent');
+      if (!existsSync(claudeDir)) continue;
+      let files: string[] = [];
+      try { files = readdirSync(claudeDir).filter(f => f.endsWith('.jsonl')); } catch { continue; }
+      const cutoff = now - window7dMs;
+      for (const f of files) {
+        const fp = path.join(claudeDir, f);
+        try { if (statSync(fp).mtimeMs < cutoff) continue; } catch { continue; }
+        scanFile(fp);
+      }
+    }
+  }
+
+  // Claude Code CLI sessions
+  if (existsSync(CLAUDE_PROJECTS)) {
+    let projDirs: string[] = [];
+    try { projDirs = readdirSync(CLAUDE_PROJECTS); } catch {}
+    const cutoff = now - window7dMs;
+    for (const proj of projDirs) {
+      const projPath = path.join(CLAUDE_PROJECTS, proj);
+      let files: string[] = [];
+      try { files = readdirSync(projPath).filter(f => f.endsWith('.jsonl')); } catch { continue; }
+      for (const f of files) {
+        const fp = path.join(projPath, f);
+        try { if (statSync(fp).mtimeMs < cutoff) continue; } catch { continue; }
+        scanFile(fp);
+      }
+    }
+  }
+
+  // resetInMs: time until the oldest token in the 5h window falls out
+  const resetInMs = oldest5hTs !== null
+    ? Math.max(0, window5hMs - (now - oldest5hTs))
+    : 0;
+
+  // Date string for daily bucket (UTC)
+  const dailyDate = new Date(todayUtcMs).toISOString().slice(0, 10);
+
+  return {
+    window5h:    { outputTokens: out5h,  resetInMs },
+    daily:       { outputTokens: out24h, date: dailyDate },
+    weekly:      { outputTokens: out7d },
+    extraOutput: extraOut,
+    limits:      { h5: LIMIT_5H, h24: LIMIT_24H, d7: LIMIT_7D },
+  };
+}
+
 // ─── Token metrics ───────────────────────────────────────────────────────────
 
 interface TokenUsage {
@@ -581,6 +687,7 @@ async function buildSnapshot() {
     await Promise.all([collectContainers(), getDockerInfo(), getDockerImages(), getDockerNetworks(), getDockerVolumes(), collectDisk(), collectTailscale(), collectSnapUpdates(), collectLogMetrics()]);
   const tokenMetrics = collectTokenMetrics();
 
+  snap.rate_limits     = collectRateLimitMetrics();
   snap.agent_detail    = collectAgentDetail();
   snap.containers      = containers;
   snap.docker_info     = dockerInfo;
