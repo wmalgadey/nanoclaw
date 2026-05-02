@@ -394,6 +394,7 @@ function summariseSession(filePath: string, label: string, kind: 'agent' | 'cli'
 
   return {
     label, kind,
+    agentGroupId: kind === 'agent' ? label : null,
     sessionId:    path.basename(filePath, '.jsonl'),
     turns:        turns.length,
     totalInput, totalOutput, totalCacheRead, totalCacheCreate,
@@ -495,6 +496,64 @@ function collectSessionData() {
   return results;
 }
 
+// ─── Agent detail ────────────────────────────────────────────────────────────
+
+interface AgentWiring {
+  channelType: string; platformId: string; mgName: string;
+  sessionMode: string; engageMode: string; pattern: string;
+  unknownSenderPolicy: string; priority: number;
+}
+interface AgentDetail {
+  id: string; name: string; folder: string; provider: string;
+  wirings: AgentWiring[];
+}
+
+function collectAgentDetail(): AgentDetail[] {
+  const db = openCentral();
+  if (!db) return [];
+  try {
+    const rows = q<Record<string, unknown>>(db, `
+      SELECT
+        ag.id, ag.name, ag.folder, ag.agent_provider,
+        mga.session_mode, mga.engage_mode, mga.pattern,
+        mga.unknown_sender_policy, mga.priority,
+        mg.channel_type, mg.platform_id, mg.name as mg_name
+      FROM agent_groups ag
+      LEFT JOIN messaging_group_agents mga ON mga.agent_group_id = ag.id
+      LEFT JOIN messaging_groups mg ON mg.id = mga.messaging_group_id
+      ORDER BY ag.name, mg.channel_type
+    `);
+    const map = new Map<string, AgentDetail>();
+    for (const row of rows) {
+      const id = String(row.id ?? '');
+      if (!map.has(id)) {
+        map.set(id, {
+          id,
+          name:     String(row.name     ?? ''),
+          folder:   String(row.folder   ?? ''),
+          provider: String(row.agent_provider ?? 'claude'),
+          wirings:  [],
+        });
+      }
+      if (row.channel_type != null) {
+        map.get(id)!.wirings.push({
+          channelType:          String(row.channel_type          ?? ''),
+          platformId:           String(row.platform_id           ?? ''),
+          mgName:               String(row.mg_name               ?? ''),
+          sessionMode:          String(row.session_mode          ?? ''),
+          engageMode:           String(row.engage_mode           ?? ''),
+          pattern:              String(row.pattern               ?? ''),
+          unknownSenderPolicy:  String(row.unknown_sender_policy ?? ''),
+          priority:             Number(row.priority              ?? 0),
+        });
+      }
+    }
+    return Array.from(map.values());
+  } finally {
+    try { db.close(); } catch {}
+  }
+}
+
 // ─── Main snapshot ───────────────────────────────────────────────────────────
 
 async function buildSnapshot() {
@@ -522,6 +581,7 @@ async function buildSnapshot() {
     await Promise.all([collectContainers(), getDockerInfo(), getDockerImages(), getDockerNetworks(), getDockerVolumes(), collectDisk(), collectTailscale(), collectSnapUpdates(), collectLogMetrics()]);
   const tokenMetrics = collectTokenMetrics();
 
+  snap.agent_detail    = collectAgentDetail();
   snap.containers      = containers;
   snap.docker_info     = dockerInfo;
   snap.docker_images   = dockerImages;

@@ -71,6 +71,7 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 <nav>
   <button class="tab active" onclick="show('overview',this)">Overview</button>
   <button class="tab" onclick="show('system',this)">System</button>
+  <button class="tab" onclick="show('agents',this)">Agents</button>
   <button class="tab" onclick="show('tokens',this)">Tokens</button>
   <button class="tab" onclick="show('sessions',this)">Sessions</button>
   <button class="tab" onclick="show('channels',this)">Channels</button>
@@ -95,6 +96,11 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
     <table><thead><tr><th>Name</th><th>Folder</th><th>Provider</th><th>Sessions</th><th>Wirings</th></tr></thead>
     <tbody id="ag-body"></tbody></table>
   </div>
+</div>
+
+<!-- AGENTS -->
+<div id="tab-agents" class="tc">
+  <div id="agents-content"></div>
 </div>
 
 <!-- TOKENS -->
@@ -233,7 +239,7 @@ function kv(rows){return rows.map(([k,v])=>`<div style="display:flex;gap:8px;mar
 function parse(c){if(!c)return'';try{const p=JSON.parse(c);if(typeof p==='string')return p;if(p?.text)return p.text;if(Array.isArray(p)){const t=p.filter(x=>x?.type==='text').map(x=>x.text);if(t.length)return t.join('\n');}return JSON.stringify(p,null,2);}catch{return c;}}
 
 async function load(){try{D=await fetch('/api/data').then(r=>r.json());document.getElementById('upd').textContent='Updated: '+new Date(D.timestamp).toLocaleTimeString();render();}catch(e){document.getElementById('upd').textContent='⚠ '+e.message;}}
-function render(){if(!D)return;renderOverview();renderSystem();renderTokens();renderSessions();renderChannels();renderUsers();refreshMsgList();}
+function render(){if(!D)return;renderOverview();renderSystem();renderAgents();renderTokens();renderSessions();renderChannels();renderUsers();refreshMsgList();}
 
 // ── alerts ────────────────────────────────────────────────────────────────────
 function renderAlerts(){
@@ -310,6 +316,105 @@ function renderAlerts(){
 }
 
 // ── overview ──────────────────────────────────────────────────────────────────
+// ── agents ────────────────────────────────────────────────────────────────────
+function renderAgents(){
+  const agents=D.agent_detail||[];
+  const el=document.getElementById('agents-content');
+  if(!agents.length){el.innerHTML='<div class="empty">No agent groups configured</div>';return;}
+
+  const now=Date.now();
+  el.innerHTML=agents.map(ag=>{
+    // Find most-recent session for this agent group
+    const agSessions=(D.sessions||[]).filter(s=>s.agent_group_id===ag.id);
+    const activeSession=agSessions.find(s=>s.container_status==='running'||s.container_status==='idle');
+    const latestSession=agSessions[0]; // already sorted by last_active DESC
+
+    // Heartbeat: look in session_data
+    let heartbeatMs=null;
+    if(latestSession){
+      const sd=(D.session_data||[]).find(d=>d.sessionId===latestSession.id);
+      if(sd?.heartbeatMs) heartbeatMs=sd.heartbeatMs;
+    }
+
+    // Token metrics: match agent sessions by agentGroupId
+    const agTokens=(D.token_metrics?.sessions||[]).filter(s=>s.kind==='agent'&&s.agentGroupId===ag.id);
+    // Pick the one with the most recent lastTs (sessions are already sorted)
+    const tok=agTokens[0]||null;
+
+    // Session status
+    const isRunning=!!activeSession;
+    const statusBadge=isRunning?badge('active','g'):badge('stopped','x');
+    const lastActive=latestSession?rel(latestSession.last_active):'–';
+    const hbText=heartbeatMs?(now-heartbeatMs<300000?badge('live','g'):'<span class="mu" style="font-size:11px">'+relMs(heartbeatMs)+'</span>'):'–';
+
+    // Wirings section
+    let wiringsHtml='';
+    if(!ag.wirings||!ag.wirings.length){
+      wiringsHtml='<div class="mu" style="font-size:12px;padding:4px 0">Kein Wiring konfiguriert</div>';
+    } else {
+      wiringsHtml=ag.wirings.map(w=>{
+        const patternHtml=w.pattern?`<span class="mono mu" style="font-size:11px">${esc(w.pattern)}</span>`:'';
+        return`<div style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:4px 0;border-bottom:1px solid var(--bd)">
+          ${badge(w.channelType,'b')}
+          <span style="font-size:12px;font-weight:600">${esc(w.platformId||w.mgName)}</span>
+          ${patternHtml}
+          <span class="mu" style="font-size:11px">│ ${esc(w.sessionMode||'–')}</span>
+          <span class="mu" style="font-size:11px">│ unknown: ${esc(w.unknownSenderPolicy||'–')}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // Context bar
+    let contextHtml='';
+    if(tok){
+      const pct=Math.min(100,tok.contextPct||0);
+      const fill=Math.min(100,tok.contextFill||0);
+      const col=pct>=90?'crit':pct>=70?'warn':'ok';
+      contextHtml=`<div style="display:flex;align-items:center;gap:8px;margin-top:6px">
+        <span class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;width:70px;flex-shrink:0">Context</span>
+        <div class="pb" style="flex:1"><div class="pf ${col}" style="width:${fill}%"></div></div>
+        <span style="font-size:11px;font-weight:700;color:var(--${col==='crit'?'rd':col==='warn'?'yw':'gn'})">${pct}%</span>
+        <span class="mu" style="font-size:11px">of 165k compact thr.</span>
+      </div>`;
+    }
+
+    // Token stats row
+    let tokHtml='';
+    if(tok){
+      tokHtml=`<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px;font-size:12px">
+        <span class="mu">Output: <strong style="color:var(--tx)">${fmtTok(tok.totalOutput||0)}</strong></span>
+        <span class="mu">Cache Hit: <strong style="color:var(--gn)">${tok.cacheHitPct}%</strong></span>
+        <span class="mu">Turns: <strong style="color:var(--tx)">${tok.turns}</strong></span>
+        <span class="mu">Last: ${rel(tok.lastTs)}</span>
+      </div>`;
+    }
+
+    return`<div class="sec" style="margin-bottom:14px">
+      <div class="sh">
+        <span>${esc(ag.name)}</span>
+        <span style="display:flex;align-items:center;gap:6px">
+          ${badge('agent','p')}
+          ${badge(ag.provider||'claude','b')}
+        </span>
+      </div>
+      <div style="padding:10px 14px">
+        <div style="margin-bottom:8px">
+          <div class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px">Wiring</div>
+          ${wiringsHtml}
+        </div>
+        <div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin-top:8px;padding-top:8px;border-top:1px solid var(--bd)">
+          <span class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;width:70px;flex-shrink:0">Session</span>
+          ${statusBadge}
+          <span class="mu" style="font-size:11px">Last active: ${lastActive}</span>
+          ${heartbeatMs?`<span class="mu" style="font-size:11px">│ Heartbeat: </span>${hbText}`:''}
+        </div>
+        ${contextHtml}
+        ${tokHtml}
+      </div>
+    </div>`;
+  }).join('');
+}
+
 // ── tokens ────────────────────────────────────────────────────────────────────
 function renderTokens(){
   const tm=D.token_metrics||{};
