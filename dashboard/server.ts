@@ -562,7 +562,7 @@ function logLineTimeMs(line: string): number | null {
 }
 
 async function collectLogMetrics() {
-  const logFile = path.join(LOGS_DIR, 'nanoclaw.log');
+  const logFile = path.join(LOGS_DIR, 'nanoclaw.error.log');
   if (!existsSync(logFile)) return null;
 
   let lines: string[];
