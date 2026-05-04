@@ -1,5 +1,5 @@
 import { Database } from 'bun:sqlite';
-import { existsSync, readdirSync, readFileSync, openSync, readSync, closeSync, statSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, appendFileSync, openSync, readSync, closeSync, statSync } from 'fs';
 import path from 'path';
 import http from 'http';
 
@@ -372,6 +372,44 @@ const LIMIT_5H  = parseInt(process.env.CLAUDE_5H_OUTPUT_LIMIT    || '0');
 const LIMIT_24H = parseInt(process.env.CLAUDE_DAILY_OUTPUT_LIMIT  || '0');
 const LIMIT_7D  = parseInt(process.env.CLAUDE_WEEKLY_OUTPUT_LIMIT || '0');
 
+// Plan-Tabelle (Output-Tokens pro 5h-Block) — Quelle: Maciek-roboblog/Claude-Code-Usage-Monitor
+const PLAN_LIMITS: Record<string, { h5: number }> = {
+  pro:    { h5:  19_000 },
+  max5x:  { h5:  88_000 },
+  max20x: { h5: 220_000 },
+};
+const CLAUDE_PLAN = (process.env.CLAUDE_PLAN ?? '').toLowerCase();
+const PLAN_INFO   = PLAN_LIMITS[CLAUDE_PLAN] ?? null;
+// Effektives 5h-Limit: explizite env > Plan-Tabelle > 0 (kein Limit)
+const EFF_LIMIT_5H = LIMIT_5H || PLAN_INFO?.h5 || 0;
+
+// ─── Exhaustion-Learning ─────────────────────────────────────────────────────
+// Jedes "out of extra usage"-Ereignis wird mit dem 5h-Token-Stand zur Zeit der
+// Erschöpfung geloggt. Der Median aller Werte ergibt das gelernte echte Limit.
+
+const EXHAUSTION_LOG = path.join(DATA_DIR, 'claude-exhaustion-events.jsonl');
+
+interface ExhaustionEvent {
+  ts: number;          // ms-Timestamp der Erschöpfung
+  out5hAtHit: number;  // 5h-Tokens zum Zeitpunkt der Erschöpfung
+  burnPerMin: number;
+  resetTs: number | null;
+}
+
+function readExhaustionEvents(): ExhaustionEvent[] {
+  try {
+    return readFileSync(EXHAUSTION_LOG, 'utf-8')
+      .split('\n').filter(l => l.trim())
+      .map(l => JSON.parse(l) as ExhaustionEvent);
+  } catch { return []; }
+}
+
+function computeLearnedLimit(events: ExhaustionEvent[]): number | null {
+  if (!events.length) return null;
+  const vals = events.map(e => e.out5hAtHit).sort((a, b) => a - b);
+  return vals[Math.floor(vals.length / 2)]; // Median — robust gegen Ausreißer
+}
+
 function collectRateLimitMetrics() {
   const now = Date.now();
   const window5hMs  = 5  * 3600000;
@@ -384,6 +422,15 @@ function collectRateLimitMetrics() {
   let out5h    = 0;
   let out24h   = 0;
   let out7d    = 0;
+  let cacheRead5h    = 0;
+  let cacheRead24h   = 0;
+  let cacheRead7d    = 0;
+  let cacheCreate5h  = 0;
+  let cacheCreate24h = 0;
+  let cacheCreate7d  = 0;
+  let input5h        = 0;
+  let input24h       = 0;
+  let input7d        = 0;
 
   // Oldest token timestamp inside 5h window — used to compute resetInMs
   let oldest5hTs: number | null = null;
@@ -424,16 +471,28 @@ function collectRateLimitMetrics() {
           }
 
           if (!e.message?.usage) continue;
-          const outputTokens: number = e.message.usage.output_tokens || 0;
+          const outputTokens:  number = e.message.usage.output_tokens              || 0;
+          const cacheRead:     number = e.message.usage.cache_read_input_tokens    || 0;
+          const cacheCreate:   number = e.message.usage.cache_creation_input_tokens || 0;
+          const inputTokens:   number = e.message.usage.input_tokens               || 0;
           const age = now - ts;
 
           if (age <= window7dMs) {
-            out7d += outputTokens;
+            out7d        += outputTokens;
+            cacheRead7d  += cacheRead;
+            cacheCreate7d += cacheCreate;
+            input7d      += inputTokens;
             events7d.push([ts, outputTokens]);
             if (age <= window24hMs) {
-              out24h += outputTokens;
+              out24h        += outputTokens;
+              cacheRead24h  += cacheRead;
+              cacheCreate24h += cacheCreate;
+              input24h      += inputTokens;
               if (age <= window5hMs) {
-                out5h += outputTokens;
+                out5h        += outputTokens;
+                cacheRead5h  += cacheRead;
+                cacheCreate5h += cacheCreate;
+                input5h      += inputTokens;
                 if (oldest5hTs === null || ts < oldest5hTs) oldest5hTs = ts;
               }
             }
@@ -487,8 +546,8 @@ function collectRateLimitMetrics() {
   // Date string for daily bucket (UTC)
   const dailyDate = new Date(todayUtcMs).toISOString().slice(0, 10);
 
-  // Parse "resets 7pm" / "resets 1:30am" as next Europe/Berlin occurrence (minute scan)
-  function parseExtraReset(msg: string): number | null {
+  // Parse "resets 7pm" / "resets 1:30am" as first Europe/Berlin occurrence AFTER the hit (minute scan)
+  function parseExtraReset(msg: string, hitTs: number): number | null {
     const m = msg.match(/resets\s+(\d+)(?::(\d+))?\s*(am|pm)/i);
     if (!m) return null;
     let h = parseInt(m[1]);
@@ -498,7 +557,7 @@ function collectRateLimitMetrics() {
     else if (ap === 'am' && h === 12) h = 0;
     const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', hour: 'numeric', minute: '2-digit', hour12: false });
     for (let off = 1; off <= 25 * 60; off++) {
-      const t = now + off * 60000;
+      const t = hitTs + off * 60000;
       const s = fmt.format(new Date(t));
       const parts = s.split(':');
       if (parseInt(parts[0]) % 24 === h && parseInt(parts[1]) === min) return t - (t % 60000);
@@ -520,26 +579,140 @@ function collectRateLimitMetrics() {
       }
       if (windowSum > peak5h) peak5h = windowSum;
     }
+  } else if (events7d.length === 1) {
+    events7d.sort((a, b) => a[0] - b[0]);
   }
 
   // Daily average: out7d / number of distinct UTC days with activity
   const activeDays = new Set(events7d.map(([ts]) => Math.floor(ts / 86400000))).size;
   const dailyAvg = activeDays > 0 ? Math.round(out7d / activeDays) : 0;
 
-  const extraResetTs = lastExtraHitMsg ? parseExtraReset(lastExtraHitMsg) : null;
+  const extraResetTs = lastExtraHitMsg && lastExtraHitTs !== null ? parseExtraReset(lastExtraHitMsg, lastExtraHitTs) : null;
   const extraLimited = extraResetTs !== null && extraResetTs > now;
 
+  // Burn-Rate (Tokens/min) über die letzten 60 Minuten — Quelle: Maciek
+  const burnWindowMs = 3_600_000;
+  let burn1hTokens = 0;
+  for (const [ts, tok] of events7d) {
+    if (now - ts <= burnWindowMs) burn1hTokens += tok;
+  }
+  const burnPerMin = burn1hTokens / 60;
+
+  // 5h-Block-Detection (Gap-basiert mit 5h-Cap): rückwärts vom jüngsten Event;
+  // Block bricht bei einer Lücke > 5h ODER wenn das Event > 5h vor dem jüngsten liegt
+  // (bei kontinuierlicher Aktivität sonst unbegrenzt langer Block).
+  let blockStart: number | null = null;
+  let blockTokens = 0;
+  if (events7d.length > 0) {
+    const newest = events7d[events7d.length - 1][0];
+    const blockFloor = newest - window5hMs;
+    blockStart = newest;
+    for (let i = events7d.length - 1; i >= 0; i--) {
+      const [ts, tok] = events7d[i];
+      if (ts < blockFloor) break;
+      if (blockStart - ts > window5hMs) break;
+      blockStart = ts;
+      blockTokens += tok;
+    }
+  }
+  const blockEndTs       = blockStart !== null ? blockStart + window5hMs : null;
+  const blockElapsedMs   = blockStart !== null ? now - blockStart : 0;
+  const blockRemainingMs = blockEndTs !== null ? Math.max(0, blockEndTs - now) : 0;
+
+  // Exhaustion-Learning: out5h rückwirkend zum Zeitpunkt der letzten Erschöpfung
+  let out5hAtHit = 0;
+  if (lastExtraHitTs !== null) {
+    for (const [ts, tok] of events7d) {
+      const age = lastExtraHitTs - ts;
+      if (age >= 0 && age <= window5hMs) out5hAtHit += tok;
+    }
+  }
+  const pastEvents = readExhaustionEvents();
+  const knownHitTs = new Set(pastEvents.map(e => e.ts));
+  if (lastExtraHitTs !== null && !knownHitTs.has(lastExtraHitTs) && out5hAtHit > 0) {
+    const ev: ExhaustionEvent = { ts: lastExtraHitTs, out5hAtHit, burnPerMin, resetTs: extraResetTs };
+    try { appendFileSync(EXHAUSTION_LOG, JSON.stringify(ev) + '\n'); } catch {}
+    pastEvents.push(ev);
+  }
+  const learnedLimit5h = computeLearnedLimit(pastEvents);
+  // Dynamisches Limit: explizite LIMIT_5H-env > gelernt (Realwert) > Plan-Tabelle > 0
+  // Gelernt hat Vorrang vor Plan-Tabelle, weil es echte Messwerte repräsentiert.
+  const dynLimit5h = LIMIT_5H || learnedLimit5h || PLAN_INFO?.h5 || 0;
+
+  // Forecast: Projection und ETA bis Limit
+  const projected5h = blockStart !== null
+    ? Math.round(blockTokens + burnPerMin * blockRemainingMs / 60_000)
+    : null;
+  const etaMs = (limit: number, current: number) =>
+    (limit > 0 && burnPerMin > 0)
+      ? Math.max(0, (limit - current) / burnPerMin) * 60_000
+      : null;
+  const etaToLimit5h  = etaMs(dynLimit5h, out5h);
+  const etaToLimit24h = etaMs(LIMIT_24H,  out24h);
+  const etaToLimit7d  = etaMs(LIMIT_7D,   out7d);
+
+  // Time-Pacing — Quelle: jens-duttke
+  const timePct5h  = blockStart !== null
+    ? Math.min(100, Math.round(blockElapsedMs / window5hMs * 100))
+    : null;
+  const usagePct5h = dynLimit5h > 0 ? Math.round(out5h / dynLimit5h * 100) : null;
+  // Pacing-Warnung nur, wenn Block ≥ 10 % gelaufen UND Verbrauch > Zeit + 10 %
+  const pacingWarn = (
+    usagePct5h !== null &&
+    timePct5h  !== null &&
+    timePct5h  >= 10 &&
+    usagePct5h >  timePct5h + 10
+  );
+
   return {
-    window5h:    { outputTokens: out5h,  resetInMs },
-    daily:       { outputTokens: out24h, date: dailyDate },
-    weekly:      { outputTokens: out7d },
-    limits:      { h5: LIMIT_5H, h24: LIMIT_24H, d7: LIMIT_7D },
-    context:     { peak5h, dailyAvg, activeDays },
-    extraUsage:  {
-      limited:    extraLimited,
-      resetTs:    extraResetTs,
-      lastHitTs:  lastExtraHitTs,
-      message:    lastExtraHitMsg || null,
+    window5h: {
+      outputTokens: out5h,
+      resetInMs,
+      blockStart,
+      blockEndTs,
+      projected:    projected5h,
+      timePct:      timePct5h,
+      usagePct:     usagePct5h,
+      pacingWarn,
+      etaToLimitMs: etaToLimit5h,
+    },
+    daily:    { outputTokens: out24h, date: dailyDate, etaToLimitMs: etaToLimit24h },
+    weekly:   { outputTokens: out7d,                   etaToLimitMs: etaToLimit7d  },
+    burn:     { perMin: burnPerMin, perHour: burnPerMin * 60, windowMs: burnWindowMs },
+    plan: {
+      source: PLAN_INFO ? 'env' : (LIMIT_5H ? 'limit-env' : 'none'),
+      name:   PLAN_INFO ? CLAUDE_PLAN : null,
+      h5:     EFF_LIMIT_5H || null,
+    },
+    limits:  { h5: LIMIT_5H, h24: LIMIT_24H, d7: LIMIT_7D },
+    context: { peak5h, dailyAvg, activeDays },
+    extraUsage: {
+      limited:   extraLimited,
+      resetTs:   extraResetTs,
+      lastHitTs: lastExtraHitTs,
+      message:   lastExtraHitMsg || null,
+    },
+    learned: {
+      limit5h:    learnedLimit5h,
+      dynLimit5h: dynLimit5h || null,
+      eventCount: pastEvents.length,
+      events:     pastEvents.slice(-5).map(e => ({ ts: e.ts, out5hAtHit: e.out5hAtHit })),
+    },
+    netWindows: {
+      // net = output + input + cacheCreate (= alle Tokens außer Cache-Reads)
+      // Spiegelt die echte Rechenarbeit, da Cache-Reads günstige KV-Lookups sind.
+      w5h: {
+        net: out5h + input5h + cacheCreate5h,
+        output: out5h, input: input5h, cacheCreate: cacheCreate5h, cacheRead: cacheRead5h,
+      },
+      daily: {
+        net: out24h + input24h + cacheCreate24h,
+        output: out24h, input: input24h, cacheCreate: cacheCreate24h, cacheRead: cacheRead24h, date: dailyDate,
+      },
+      weekly: {
+        net: out7d + input7d + cacheCreate7d,
+        output: out7d, input: input7d, cacheCreate: cacheCreate7d, cacheRead: cacheRead7d,
+      },
     },
   };
 }
@@ -1088,6 +1261,8 @@ Bun.serve({
       });
       return new Response(stream, { headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' } });
     }
+    if (pathname === '/docs')
+      return new Response(Bun.file(path.join(PUBLIC, 'docs.html')), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });
     if (pathname === '/insights/latest') {
       const p = path.join(DATA_DIR, 'insights-latest.html');
       if (existsSync(p)) return new Response(Bun.file(p), { headers: { 'Content-Type': 'text/html; charset=utf-8' } });

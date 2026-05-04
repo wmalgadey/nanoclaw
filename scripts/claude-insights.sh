@@ -6,8 +6,21 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DATA_DIR="$(dirname "$SCRIPT_DIR")/data"
 OUT="$DATA_DIR/insights-latest.html"
+DIFF_OUT="$DATA_DIR/insights-diff.txt"
 STATUS_FILE="$DATA_DIR/claude-status.json"
 CLAUDE=/home/linuxbrew/.linuxbrew/bin/claude
+
+# Archive current report under its own modification timestamp before overwriting
+PREV=""
+if [ -f "$OUT" ]; then
+  PREV_TS=$(date -r "$OUT" +%Y-%m-%dT%H-%M 2>/dev/null \
+    || stat -c %Y "$OUT" | xargs -I{} date -d @{} +%Y-%m-%dT%H-%M)
+  PREV="$DATA_DIR/insights-$PREV_TS.html"
+  if [ ! -f "$PREV" ]; then
+    cp "$OUT" "$PREV"
+    echo "Archived previous report as $PREV" >&2
+  fi
+fi
 
 # Skip if currently rate-limited
 if [ -f "$STATUS_FILE" ]; then
@@ -48,7 +61,12 @@ else
   fi
 fi
 
-# Stamp the generation time in the file name as well (symlink style)
-DATED="$DATA_DIR/insights-$(date +%Y-%m-%d).html"
-cp "$OUT" "$DATED"
 echo "Insights saved to $OUT" >&2
+
+# Generate a text diff against the archived previous report
+if [ -n "$PREV" ] && [ -f "$PREV" ]; then
+  strip_html() { sed 's/<[^>]*>//g' "$1" | sed '/^[[:space:]]*$/d'; }
+  diff <(strip_html "$PREV") <(strip_html "$OUT") > "$DIFF_OUT" 2>&1 || true
+  CHANGED=$(grep -c '^[<>]' "$DIFF_OUT" 2>/dev/null || echo 0)
+  echo "Diff written to $DIFF_OUT ($CHANGED changed lines vs $PREV)" >&2
+fi

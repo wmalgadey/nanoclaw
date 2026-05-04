@@ -65,6 +65,7 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
   <h1>⚡ NanoClaw</h1>
   <div style="display:flex;align-items:center;gap:14px">
     <span id="upd" class="mu" style="font-size:11px">loading…</span>
+    <a href="/docs" target="_blank" style="font-size:11px;color:var(--mu);text-decoration:none" onmouseover="this.style.color='var(--tx)'" onmouseout="this.style.color='var(--mu)'">Docs</a>
     <button class="btn" onclick="load()">↻ Refresh</button>
   </div>
 </header>
@@ -108,6 +109,10 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
   <div class="sec" style="margin-bottom:14px" id="rl-section">
     <div class="sh">Rate-Limit-Fenster</div>
     <div id="rl-content" style="padding:12px 14px"></div>
+  </div>
+  <div class="sec" style="margin-bottom:14px" id="rl-net-section">
+    <div class="sh">Netto-Fenster <span class="cnt">Output − Cache-Reads</span></div>
+    <div id="rl-net-content" style="padding:12px 14px"></div>
   </div>
   <div class="grid" id="tok-summary"></div>
   <div class="sec">
@@ -422,17 +427,30 @@ function renderRateLimits(){
   if(!rl){el.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';return;}
 
   const ctx=rl.context||{};
+  const burn=rl.burn||{};
+  const plan=rl.plan||{};
+  const w5h=rl.window5h||{};
+  const learned=rl.learned||{};
 
-  function bar(label,tokens,limit,ref,extra){
-    // ref = {value, label} for context bar when no limit set
-    let html=`<div style="margin-bottom:12px">`;
+  // ETA-Farbcode (rot < 30min, gelb < 2h, sonst grün)
+  function etaColor(ms){return ms<1800000?'rd':ms<7200000?'yw':'gn';}
+  function etaTxt(ms){return ms===null||ms===undefined?null:ms<60000?'<1m':fmtMs(ms);}
+
+  // Bar mit optionalem Pacing-Marker + ETA/Projected-Footer
+  function bar(label,tokens,limit,ref,extra,opts){
+    opts=opts||{};
+    let html=`<div style="margin-bottom:14px">`;
     html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">`;
     html+=`<span style="font-size:12px;font-weight:600">${label}</span>`;
     if(limit>0){
       const pct=Math.min(100,Math.round(tokens/limit*100));
       html+=`<span style="font-size:12px">${fmtTok(tokens)} / ${fmtTok(limit)} <span class="mu">(${pct}%)</span></span>`;
       html+=`</div>`;
-      html+=`<div class="pb"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div></div>`;
+      // Balken mit optionalem Time-Pacing-Marker
+      const paceMark=(opts.timePct!=null)
+        ?`<div style="position:absolute;left:${Math.min(100,opts.timePct)}%;top:-2px;bottom:-2px;width:1px;background:var(--tx);opacity:.55" title="Zeit im 5h-Block: ${opts.timePct}%"></div>`:'';
+      const bgTint=opts.pacingWarn?'background:rgba(234,179,8,.2)':'';
+      html+=`<div class="pb" style="position:relative;${bgTint}"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div>${paceMark}</div>`;
     } else if(ref&&ref.value>0){
       const pct=Math.min(100,Math.round(tokens/ref.value*100));
       html+=`<span style="font-size:12px">${fmtTok(tokens)} <span class="mu">vs ${ref.label} ${fmtTok(ref.value)}</span></span>`;
@@ -441,22 +459,55 @@ function renderRateLimits(){
     } else {
       html+=`<span style="font-size:12px">${fmtTok(tokens)} tokens</span></div>`;
     }
-    if(extra){html+=`<div style="margin-top:3px">${extra}</div>`;}
+    // Footer: Projected + ETA + zusätzliche extras
+    const footerParts=[];
+    if(opts.projected!=null) footerParts.push(`<span class="mu" style="font-size:11px">Projected: <strong style="color:var(--tx)">${fmtTok(opts.projected)}</strong></span>`);
+    if(opts.etaMs!=null && limit>0 && tokens<limit){
+      const c=etaColor(opts.etaMs);
+      footerParts.push(`<span class="mu" style="font-size:11px">ETA bis Limit: <strong style="color:var(--${c})">${etaTxt(opts.etaMs)}</strong>${c==='rd'?' ⚠':''}</span>`);
+    }
+    if(opts.pacingWarn) footerParts.push(`<span style="font-size:11px;color:var(--yw)">⚠ Verbrauch läuft Zeit voraus</span>`);
+    if(extra) footerParts.push(extra);
+    if(footerParts.length) html+=`<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px">${footerParts.join('')}</div>`;
     html+=`</div>`;
     return html;
   }
 
-  const resetNote=rl.window5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${fmtMs(rl.window5h.resetInMs)}</span>`:'';
+  // Header-Zeile: Plan-Badge + Burn-Rate + Learned-Badge
+  let header='';
+  if(plan.name){
+    header+=`<span class="badge bp" title="Quelle: ${esc(plan.source)}">Plan: ${esc(plan.name)} · ${esc(plan.source)}</span>`;
+  } else if(plan.source==='limit-env'){
+    header+=`<span class="badge bb">Limits via env</span>`;
+  }
+  if(burn.perMin>0){
+    header+=`<span class="badge bg" style="margin-left:6px">Burn: ${fmtTok(Math.round(burn.perHour))}/h</span>`;
+  }
+  if(learned.eventCount>0){
+    const limitActive=!rl.limits.h5&&learned.dynLimit5h===learned.limit5h;
+    const limitLabel=rl.limits.h5?'durch Limit-Env überschrieben':limitActive?'aktiv':'Fallback: Plan-Tabelle';
+    const limitTitle=`Gelerntes Limit aus ${learned.eventCount} gemessenen Erschöpfungs-Ereignissen · ${limitLabel}`;
+    header+=`<span class="badge" style="margin-left:6px;background:rgba(139,92,246,.15);color:var(--pp);border:1px solid rgba(139,92,246,.35)" title="${limitTitle}">`
+      +`Gelernt: ~${fmtTok(learned.limit5h)} · ${learned.eventCount}× · ${limitLabel}</span>`;
+  }
   let html='';
-  html+=bar('Letzte 5h (rolling)',rl.window5h.outputTokens,rl.limits.h5,
-    ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null, resetNote);
-  html+=bar('Heute (UTC)',rl.daily.outputTokens,rl.limits.h24,
-    ctx.dailyAvg?{value:ctx.dailyAvg,label:'∅ 7d'}:null, null);
-  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null,
-    ctx.activeDays?`<span class="mu" style="font-size:11px">${ctx.activeDays} aktive Tage</span>`:null);
+  if(header) html+=`<div style="margin-bottom:12px">${header}</div>`;
 
-  if(!rl.limits.h5&&!rl.limits.h24){
-    html+=`<div style="margin-top:4px;font-size:11px;color:var(--mu)">Kein Cap konfiguriert — Balken zeigen Vergleich zum historischen Peak / Ø.</div>`;
+  const resetNote=w5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${fmtMs(w5h.resetInMs)}</span>`:'';
+  const blockNote=w5h.blockEndTs?`<span class="mu" style="font-size:11px">5h-Block endet in ${fmtMs(Math.max(0,w5h.blockEndTs-Date.now()))}</span>`:'';
+  const barLimit5h=rl.limits.h5||plan.h5||learned.dynLimit5h||0;
+  html+=bar('Letzte 5h (rolling)',w5h.outputTokens, barLimit5h,
+    ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null, resetNote||blockNote,
+    {timePct:w5h.timePct, pacingWarn:w5h.pacingWarn, projected:w5h.projected, etaMs:w5h.etaToLimitMs});
+  html+=bar('Heute (UTC)',rl.daily.outputTokens,rl.limits.h24,
+    ctx.dailyAvg?{value:ctx.dailyAvg,label:'∅ 7d'}:null, null,
+    {etaMs:rl.daily.etaToLimitMs});
+  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null,
+    ctx.activeDays?`<span class="mu" style="font-size:11px">${ctx.activeDays} aktive Tage</span>`:null,
+    {etaMs:rl.weekly.etaToLimitMs});
+
+  if(!rl.limits.h5&&!rl.limits.h24&&!plan.h5&&!learned.dynLimit5h){
+    html+=`<div style="margin-top:4px;font-size:11px;color:var(--mu)">Kein Cap konfiguriert — Balken zeigen Vergleich zum historischen Peak / Ø. Setze <code>CLAUDE_PLAN=pro|max5x|max20x</code> oder <code>CLAUDE_*_LIMIT</code> als env.</div>`;
   }
 
   // Extra usage status
@@ -473,10 +524,64 @@ function renderRateLimits(){
     html+=`<div style="margin-top:10px;font-size:11px;color:var(--mu)">Letzter Extra-Usage-Hit: ${fmtMs(ago)} ago</div>`;
   }
 
+  // Erschöpfungs-Verlauf (Learning-History)
+  if((learned.events||[]).length>0){
+    const evts=[...(learned.events||[])].reverse();
+    html+=`<details style="margin-top:12px"><summary style="font-size:11px;color:var(--mu);cursor:pointer;user-select:none">`;
+    html+=`Erschöpfungs-Verlauf · ${learned.eventCount} Ereignisse · Gelerntes Limit: ~${fmtTok(learned.limit5h)}`;
+    html+=`</summary><div style="margin-top:8px;font-size:11px">`;
+    html+=evts.map(e=>{
+      const d=new Date(e.ts);
+      const dateStr=d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
+        +' '+d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
+      return`<div style="display:flex;gap:12px;padding:4px 0;border-bottom:1px solid var(--bd)"><span class="mu" style="min-width:110px">${dateStr}</span><strong>${fmtTok(e.out5hAtHit)}</strong><span class="mu">Tokens im 5h-Fenster</span></div>`;
+    }).join('');
+    html+=`</div></details>`;
+  }
+
   // Insights link
   html+=`<div style="margin-top:12px;font-size:12px"><a href="/insights/latest" target="_blank" style="color:var(--ac)">📊 Claude Insights Report öffnen</a> <span class="mu">(wöchentlich via Cron)</span></div>`;
 
   el.innerHTML=html;
+
+  // ── Netto-Block (Output + Input + CacheCreate, ohne Cache-Reads) ────────────
+  const nw=rl.netWindows||{};
+  const nel=document.getElementById('rl-net-content');
+  if(nel&&nw.w5h!=null){
+    // Hilfsfunktion: "X% davon Output/Input/Cache"
+    function tokBreak(o,i,cc,cr){
+      if(!o&&!i&&!cc) return '';
+      const tot=o+i+cc+cr;
+      const parts=[];
+      if(o)  parts.push(`Out: ${fmtTok(o)}`);
+      if(i)  parts.push(`In: ${fmtTok(i)}`);
+      if(cc) parts.push(`CacheW: ${fmtTok(cc)}`);
+      if(cr) parts.push(`<span style="color:var(--gn)">−CacheR: ${fmtTok(cr)}</span>`);
+      return`<span class="mu" style="font-size:11px">${parts.join(' · ')}</span>`;
+    }
+    // Header: Cache-Einsparungsrate im 5h-Block
+    let nhtml='';
+    const saveRatio5h=nw.w5h.net>0?Math.round(nw.w5h.cacheRead/(nw.w5h.net+nw.w5h.cacheRead)*100):0;
+    if(nw.w5h.cacheRead>0){
+      nhtml+=`<div style="margin-bottom:12px">`;
+      nhtml+=`<span class="badge bg" title="Durch Prompt-Caching eingespartes Rechen-Volumen im 5h-Fenster">Cache-Savings 5h: ${fmtTok(nw.w5h.cacheRead)} (${saveRatio5h}% der Gesamttokens)</span>`;
+      nhtml+=`</div>`;
+    }
+    // 5h-Netto-Balken: Referenz = 7d-Wert als Vergleichsmaßstab wenn kein Limit
+    const peak7dNet=nw.weekly?.net||0;
+    const ref5hNet=peak7dNet>nw.w5h.net?{value:Math.round(peak7dNet/ctx.activeDays||1),label:'∅ 7d'}:null;
+    nhtml+=bar('Letzte 5h (netto)',nw.w5h.net,0,ref5hNet,
+      tokBreak(nw.w5h.output,nw.w5h.input,nw.w5h.cacheCreate,nw.w5h.cacheRead),
+      {timePct:w5h.timePct});
+    nhtml+=bar('Heute (UTC) netto',nw.daily?.net||0,0,
+      ctx.dailyAvg?{value:Math.round((nw.weekly?.net||0)/(ctx.activeDays||1)),label:'∅ 7d'}:null,
+      tokBreak(nw.daily?.output,nw.daily?.input,nw.daily?.cacheCreate,nw.daily?.cacheRead),{});
+    nhtml+=bar('Letzte 7 Tage (netto)',nw.weekly?.net||0,0,null,
+      tokBreak(nw.weekly?.output,nw.weekly?.input,nw.weekly?.cacheCreate,nw.weekly?.cacheRead),{});
+    nel.innerHTML=nhtml;
+  } else if(nel){
+    nel.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';
+  }
 }
 
 // ── tokens ────────────────────────────────────────────────────────────────────
@@ -487,7 +592,9 @@ function renderTokens(){
   const compact=165000,full=200000;
 
   // Summary cards
+  const burnH=Math.round((D.rate_limits?.burn?.perHour)||0);
   document.getElementById('tok-summary').innerHTML=[
+    {t:'Burn-Rate (60 min)', v:burnH>0?fmtTok(burnH)+'/h':'—', c:burnH>0?'bl':''},
     {t:'Output Tokens',     v:fmtTok(tm.totalOutput||0)},
     {t:'Input Tokens',      v:fmtTok(tm.totalInput||0)},
     {t:'Cache Reads',       v:fmtTok(tm.totalCacheRead||0)},
@@ -580,6 +687,7 @@ function renderOverview(){
   const tm=D.token_metrics||{};
   const tmOut=tm.totalOutput||0,tmCR=tm.overallCacheHit??'–';
   const msgsToday=(D.session_data||[]).reduce((sum,sd)=>sum+((sd.msgMetrics?.today)||0),0);
+  const burnH=Math.round(D.rate_limits?.burn?.perHour||0);
   document.getElementById('stats').innerHTML=[
     {t:'Agent Groups',      v:(D.agent_groups||[]).length},
     {t:'Active Sessions',   v:active.length,c:active.length?'gn':''},
@@ -590,6 +698,7 @@ function renderOverview(){
     {t:'RAM Used',          v:sys.memory?fmtB(sys.memory.used):'–'},
     {t:'Output Tokens',     v:fmtTok(tmOut)},
     {t:'Cache Hit Rate',    v:tmCR+'%',c:tmCR>=60?'gn':tmCR>=30?'yw':'rd'},
+    {t:'Burn-Rate (1h)',    v:burnH>0?fmtTok(burnH)+'/h':'—',c:burnH>0?'bl':''},
   ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
 
   document.getElementById('ct-cnt').textContent=cts.length+' total';
