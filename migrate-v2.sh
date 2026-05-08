@@ -5,6 +5,8 @@
 # Run from the v2 directory:
 #   bash migrate-v2.sh
 #
+# If you're in Claude Code, exit first or open a separate terminal.
+#
 # Finds v1 automatically (sibling directory, or $NANOCLAW_V1_PATH).
 # Installs prerequisites (Node, pnpm, deps) via the existing setup.sh
 # bootstrap, then runs the migration steps.
@@ -16,6 +18,19 @@ set -uo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$PROJECT_ROOT"
+
+# This script has interactive prompts (channel selection, service switchover)
+# and streams progress output — it must run in a real terminal, not inside
+# a tool subprocess (e.g. Claude Code's Bash tool, which collapses output).
+if ! [ -t 0 ] || ! [ -t 1 ]; then
+  echo "This script requires an interactive terminal."
+  echo ""
+  echo "If you're in Claude Code, exit first or open a separate terminal,"
+  echo "then run:"
+  echo "  bash migrate-v2.sh"
+  echo ""
+  exit 1
+fi
 
 LOGS_DIR="$PROJECT_ROOT/logs"
 STEPS_DIR="$LOGS_DIR/migrate-steps"
@@ -227,8 +242,12 @@ fi
 
 V1_DB="$V1_PATH/store/messages.db"
 
-# Quick schema check — make sure the tables we need exist
-TABLES=$(sqlite3 "$V1_DB" ".tables" 2>/dev/null || true)
+# Quick schema check — make sure the tables we need exist.
+# Uses the in-tree wrapper instead of the sqlite3 CLI: setup.sh (run via
+# phase 0a above) installs Node + better-sqlite3 but NOT the sqlite3 CLI,
+# and #2191 documented how a missing CLI here used to surface as a
+# misleading "registered_groups missing" abort.
+TABLES=$(pnpm exec tsx scripts/q.ts "$V1_DB" "SELECT name FROM sqlite_master WHERE type='table'" 2>/dev/null || true)
 
 if echo "$TABLES" | grep -q "registered_groups"; then
   step_ok "v1 database has registered_groups"
@@ -238,8 +257,8 @@ else
 fi
 
 # Show what we found
-GROUP_COUNT=$(sqlite3 "$V1_DB" "SELECT COUNT(*) FROM registered_groups" 2>/dev/null || echo 0)
-TASK_COUNT=$(sqlite3 "$V1_DB" "SELECT COUNT(*) FROM scheduled_tasks WHERE status='active'" 2>/dev/null || echo 0)
+GROUP_COUNT=$(pnpm exec tsx scripts/q.ts "$V1_DB" "SELECT COUNT(*) FROM registered_groups" 2>/dev/null || echo 0)
+TASK_COUNT=$(pnpm exec tsx scripts/q.ts "$V1_DB" "SELECT COUNT(*) FROM scheduled_tasks WHERE status='active'" 2>/dev/null || echo 0)
 ENV_KEYS=0
 if [ -f "$V1_PATH/.env" ]; then
   ENV_KEYS=$(grep -c '=' "$V1_PATH/.env" 2>/dev/null || echo 0)
@@ -393,20 +412,12 @@ else
     fi
   done
 
-  # 2d. WhatsApp LID resolution. After whatsapp is installed (so Baileys
-  # is on disk) and auth files have been copied (so we can connect with
-  # the migrated identity), boot Baileys briefly to learn LID↔phone
-  # mappings during initial sync, then write paired LID-keyed
-  # messaging_groups. Best-effort: any failure degrades to runtime
-  # approval flow, which the WA adapter's isMention=true on DMs handles.
-  for ch in "${SELECTED_CHANNELS[@]}"; do
-    if [ "$ch" = "whatsapp" ]; then
-      run_step "2d-whatsapp-lids" \
-        "Resolve WhatsApp LIDs for migrated DMs" \
-        "setup/migrate-v2/whatsapp-resolve-lids.ts"
-      break
-    fi
-  done
+  # 2d. (Removed) WhatsApp LID resolution was previously needed because the
+  # v6 adapter couldn't reliably translate LID→phone JIDs, so the migration
+  # pre-created dual messaging_groups rows. With Baileys v7, the adapter
+  # resolves LIDs via extractAddressingContext + signalRepository.lidMapping
+  # on every inbound message, so dual rows are unnecessary and were causing
+  # split sessions.
 fi
 
 echo
@@ -443,7 +454,7 @@ ONECLI_OK=false
 ONECLI_URL_FROM_ENV=$(grep '^ONECLI_URL=' .env 2>/dev/null | head -1 | sed 's/^ONECLI_URL=//')
 ONECLI_URL_CHECK="${ONECLI_URL_FROM_ENV:-http://127.0.0.1:10254}"
 
-if curl -sf "${ONECLI_URL_CHECK}/health" >/dev/null 2>&1; then
+if curl -sf "${ONECLI_URL_CHECK}/api/health" >/dev/null 2>&1; then
   step_ok "OneCLI running at $(dim "$ONECLI_URL_CHECK")"
   ONECLI_OK=true
   log "OneCLI: running at $ONECLI_URL_CHECK"
@@ -547,6 +558,26 @@ echo
 echo "$(bold 'Service switchover')"
 echo
 
+# Disable the v1 service so it doesn't auto-start, but leave the unit file
+# on disk so the user can rollback with: systemctl --user start nanoclaw
+# Idempotent — safe to call multiple times.
+disable_v1_service() {
+  if [ "$PLATFORM_SERVICE" = "systemd" ]; then
+    local v1_file="$HOME/.config/systemd/user/${V1_SERVICE}.service"
+    if [ -f "$v1_file" ] || [ -L "$v1_file" ]; then
+      systemctl --user stop "$V1_SERVICE" 2>/dev/null || true
+      systemctl --user disable "$V1_SERVICE" 2>/dev/null || true
+      step_ok "Disabled $V1_SERVICE (unit file kept for rollback)"
+    fi
+  elif [ "$PLATFORM_SERVICE" = "launchd" ]; then
+    local v1_plist="$HOME/Library/LaunchAgents/${V1_SERVICE}.plist"
+    if [ -f "$v1_plist" ] || [ -L "$v1_plist" ]; then
+      launchctl unload "$v1_plist" 2>/dev/null || true
+      step_ok "Unloaded $V1_SERVICE (plist kept for rollback)"
+    fi
+  fi
+}
+
 # Detect platform and service names
 V1_SERVICE=""
 V2_SERVICE=""
@@ -635,16 +666,14 @@ if [ "$V1_RUNNING" = "true" ]; then
       SERVICE_SWITCHED=false
     else
       step_ok "Keeping v2 service"
-      # Disable v1 from auto-starting
-      if [ "$PLATFORM_SERVICE" = "systemd" ]; then
-        systemctl --user disable "$V1_SERVICE" 2>/dev/null || true
-      fi
+      disable_v1_service
     fi
   else
     step_skip "Service switchover skipped"
   fi
 else
   step_skip "v1 service not running — nothing to switch"
+  disable_v1_service
 fi
 
 echo
@@ -676,6 +705,16 @@ echo "    $(green '✓')  Channels installed: ${SELECTED_CHANNELS[*]}"
 fi
 echo "    $(green '✓')  Container skills copied"
 echo "    $(green '✓')  Container image built"
+if [ "$SERVICE_SWITCHED" = "true" ] && [ -n "$V2_SERVICE" ]; then
+echo "    $(green '✓')  Service switched to v2 $(dim "($V2_SERVICE)")"
+echo
+echo "  $(bold 'Rollback to v1:')"
+if [ "$PLATFORM_SERVICE" = "systemd" ]; then
+echo "    $(dim '$') systemctl --user stop $V2_SERVICE && systemctl --user start $V1_SERVICE"
+elif [ "$PLATFORM_SERVICE" = "launchd" ]; then
+echo "    $(dim '$') launchctl unload ~/Library/LaunchAgents/${V2_SERVICE}.plist && launchctl load ~/Library/LaunchAgents/${V1_SERVICE}.plist"
+fi
+fi
 echo
 echo "  $(bold 'What still needs a human:')"
 if [ "$ONECLI_OK" = "false" ]; then
