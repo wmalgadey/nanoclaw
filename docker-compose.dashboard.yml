@@ -31,7 +31,7 @@ services:
       HOST_ETC: /host/etc
       CLAUDE_PROJECTS_DIR: /host/claude-projects
       CLAUDE_PLAN: pro
-      CLAUDE_5H_OUTPUT_LIMIT: "0"      # 0 = kein Cap konfiguriert (anpassen: 88000 für Max 5x, 352000 für Max 20x)
+      CLAUDE_5H_OUTPUT_LIMIT: "0"      # 0 = kein Cap konfiguriert; Plan-Tabelle + Exhaustion-Learning greifen
       CLAUDE_DAILY_OUTPUT_LIMIT: "0"
-      CLAUDE_WEEKLY_OUTPUT_LIMIT: "0"
+      CLAUDE_WEEKLY_OUTPUT_LIMIT: "5350000"  # empirisch: claude.ai zeigt 23% bei 1.23M → ~5.36M/Woche
     restart: unless-stopped

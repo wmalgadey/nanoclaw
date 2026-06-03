@@ -368,15 +368,34 @@ async function collectContainers() {
 
 // ─── Rate-limit metrics ──────────────────────────────────────────────────────
 
+// Claude weekly limit resets Friday 00:00 Europe/Berlin (not rolling 7 days).
+// Simplified DST: CEST UTC+2 April–October, CET UTC+1 otherwise.
+function lastFridayMidnightMs(now: number): number {
+  const wdFmt = new Intl.DateTimeFormat('en-US', { timeZone: 'Europe/Berlin', weekday: 'short' });
+  const dateFmt = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Berlin', year: 'numeric', month: '2-digit', day: '2-digit' });
+  const d = new Date(now);
+  const wd: Record<string, number> = { Sun: 0, Mon: 1, Tue: 2, Wed: 3, Thu: 4, Fri: 5, Sat: 6 };
+  const todayWd = wd[wdFmt.format(d)] ?? 0;
+  const daysSinceFri = todayWd >= 5 ? todayWd - 5 : todayWd + 2;
+  const friDate = new Date(now - daysSinceFri * 86_400_000);
+  const friStr = dateFmt.format(friDate); // YYYY-MM-DD
+  const month = parseInt(friStr.split('-')[1]);
+  const offset = (month >= 4 && month <= 10) ? '+02:00' : '+01:00';
+  return new Date(`${friStr}T00:00:00${offset}`).getTime();
+}
+
 const LIMIT_5H  = parseInt(process.env.CLAUDE_5H_OUTPUT_LIMIT    || '0');
 const LIMIT_24H = parseInt(process.env.CLAUDE_DAILY_OUTPUT_LIMIT  || '0');
 const LIMIT_7D  = parseInt(process.env.CLAUDE_WEEKLY_OUTPUT_LIMIT || '0');
 
-// Plan-Tabelle (Output-Tokens pro 5h-Block) — Quelle: Maciek-roboblog/Claude-Code-Usage-Monitor
+// Plan-Tabelle (Output-Tokens pro 5h-Block)
+// Quelle: Maciek-roboblog (ursprünglich), empirisch korrigiert via claude.ai/usage-Vergleich.
+// Pro ~45k: aus Screenshot "39% bei 17.6k Output" rückgerechnet (Stand Mai 2026).
+// Max5x/Max20x: Schätzwerte, werden durch Exhaustion-Learning überschrieben sobald Daten vorliegen.
 const PLAN_LIMITS: Record<string, { h5: number }> = {
-  pro:    { h5:  19_000 },
-  max5x:  { h5:  88_000 },
-  max20x: { h5: 220_000 },
+  pro:    { h5:  45_000 },
+  max5x:  { h5: 175_000 },
+  max20x: { h5: 440_000 },
 };
 const CLAUDE_PLAN = (process.env.CLAUDE_PLAN ?? '').toLowerCase();
 const PLAN_INFO   = PLAN_LIMITS[CLAUDE_PLAN] ?? null;
@@ -583,6 +602,10 @@ function collectRateLimitMetrics() {
     events7d.sort((a, b) => a[0] - b[0]);
   }
 
+  // Calendar-week output: since last Friday 00:00 Berlin (matches claude.ai weekly %)
+  const fridayCutoff = lastFridayMidnightMs(now);
+  const outWeekCal = events7d.filter(([ts]) => ts >= fridayCutoff).reduce((s, [, t]) => s + t, 0);
+
   // Daily average: out7d / number of distinct UTC days with activity
   const activeDays = new Set(events7d.map(([ts]) => Math.floor(ts / 86400000))).size;
   const dailyAvg = activeDays > 0 ? Math.round(out7d / activeDays) : 0;
@@ -677,7 +700,7 @@ function collectRateLimitMetrics() {
       etaToLimitMs: etaToLimit5h,
     },
     daily:    { outputTokens: out24h, date: dailyDate, etaToLimitMs: etaToLimit24h },
-    weekly:   { outputTokens: out7d,                   etaToLimitMs: etaToLimit7d  },
+    weekly:   { outputTokens: out7d, etaToLimitMs: etaToLimit7d, calWeekOutput: outWeekCal, calWeekCutoff: fridayCutoff },
     burn:     { perMin: burnPerMin, perHour: burnPerMin * 60, windowMs: burnWindowMs },
     plan: {
       source: PLAN_INFO ? 'env' : (LIMIT_5H ? 'limit-env' : 'none'),
@@ -1179,7 +1202,7 @@ async function collectLogMetrics() {
     if (!lvl) continue;
 
     totals[lvl]++;
-    const hoursAgo = Math.min(23, Math.floor((now - ts) / 3600000));
+    const hoursAgo = Math.max(0, Math.min(23, Math.floor((now - ts) / 3600000)));
     const bucket = hourly[23 - hoursAgo];
     bucket[lvl]++;
 

@@ -106,6 +106,10 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 
 <!-- TOKENS -->
 <div id="tab-tokens" class="tc">
+  <div class="sec" style="margin-bottom:14px" id="rl-usage-section">
+    <div class="sh">Nutzungsstatus <span class="cnt">claude.ai · alle Quellen</span></div>
+    <div id="rl-usage-content" style="padding:12px 14px"></div>
+  </div>
   <div class="sec" style="margin-bottom:14px" id="rl-section">
     <div class="sh">Rate-Limit-Fenster</div>
     <div id="rl-content" style="padding:12px 14px"></div>
@@ -495,7 +499,51 @@ function renderRateLimits(){
 
   const resetNote=w5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${fmtMs(w5h.resetInMs)}</span>`:'';
   const blockNote=w5h.blockEndTs?`<span class="mu" style="font-size:11px">5h-Block endet in ${fmtMs(Math.max(0,w5h.blockEndTs-Date.now()))}</span>`:'';
-  const barLimit5h=rl.limits.h5||plan.h5||learned.dynLimit5h||0;
+  const barLimit5h=rl.limits.h5||learned.dynLimit5h||plan.h5||0;
+
+  // ── Nutzungsstatus-Block (claude.ai-Vergleich) ──────────────────
+  (function(){
+    const usel=document.getElementById('rl-usage-content');
+    if(!usel) return;
+    const sessionPct=barLimit5h>0?Math.min(100,Math.round((w5h.outputTokens||0)/barLimit5h*100)):null;
+    // Rolling 7d output — claude.ai also counts web/desktop which we can't see, so % will differ
+    const calOut=rl.weekly.outputTokens||0;
+    const weeklyPct=rl.limits.d7>0?Math.min(100,Math.round(calOut/rl.limits.d7*100)):null;
+    // claude.ai displays "Do. 23:59" — Thursday 23:59 = Friday 00:00 minus 1 min
+    function nextThursdayNight(){
+      const n=new Date(),d=n.getDay(),t=new Date(n);
+      t.setDate(n.getDate()+(4-d+7)%7);t.setHours(23,59,0,0); // 4=Thursday
+      if(t<=n) t.setDate(t.getDate()+7);
+      return t;
+    }
+    const thu=nextThursdayNight();
+    const weeklyResetStr=thu.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'})+' 23:59';
+    const weeklyResetMs=thu-Date.now();
+    const reset5hStr=w5h.resetInMs>0?`Zurücksetzen in ${fmtMs(w5h.resetInMs)}`:'kein aktiver Block';
+    function ucard(title,sub,pct,tokens,limit,resetLine,note){
+      const safeP=Math.min(100,pct!=null?pct:0);
+      const pfCls=pct>=80?'crit':pct>=60?'warn':'ok';
+      const nc=pct>=80?'var(--rd)':pct>=60?'var(--yw)':'var(--gn)';
+      return`<div style="flex:1;min-width:140px;background:var(--bg);border:1px solid var(--bd);border-radius:8px;padding:12px 14px">`
+        +`<div style="font-size:10px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px">${title}</div>`
+        +(sub?`<div style="font-size:10px;color:var(--mu);margin-bottom:8px">${sub}</div>`:`<div style="margin-bottom:8px"></div>`)
+        +`<div style="font-size:32px;font-weight:700;line-height:1;margin-bottom:8px;color:${nc}">${pct!=null?pct+'%':'—'}</div>`
+        +`<div class="pb" style="margin-bottom:6px"><div class="pf ${pfCls}" style="width:${safeP}%"></div></div>`
+        +`<div style="font-size:11px;color:var(--mu)">${fmtTok(tokens)} / ${limit>0?fmtTok(limit):'∞'}</div>`
+        +`<div style="font-size:11px;color:var(--mu);margin-top:2px">${resetLine}</div>`
+        +(note?`<div style="font-size:10px;color:var(--mu);margin-top:6px;padding-top:5px;border-top:1px solid var(--bd);font-style:italic">${note}</div>`:'')
+        +`</div>`;
+    }
+    usel.innerHTML=`<div style="display:flex;gap:12px;flex-wrap:wrap">`
+      +ucard('5h Rolling-Fenster',barLimit5h>0?`Limit: ${fmtTok(barLimit5h)}`:'kein Limit konfiguriert',
+        sessionPct,w5h.outputTokens||0,barLimit5h,reset5hStr,
+        'Alle Sessions der letzten 5h · ≠ claude.ai "Aktuelle Sitzung" (per Session)')
+      +ucard('Wöchentliche Limits','Alle Modelle · rollendes 7d-Fenster',weeklyPct,calOut,rl.limits.d7||0,
+        `Zurücksetzung ${weeklyResetStr}`,
+        'Nur CLI+Container — claude.ai zählt auch Web/Desktop')
+      +`</div>`;
+  })();
+
   html+=bar('Letzte 5h (rolling)',w5h.outputTokens, barLimit5h,
     ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null, resetNote||blockNote,
     {timePct:w5h.timePct, pacingWarn:w5h.pacingWarn, projected:w5h.projected, etaMs:w5h.etaToLimitMs});
