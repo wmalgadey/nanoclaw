@@ -12,6 +12,7 @@ const CLAUDE_PROJECTS   = process.env.CLAUDE_PROJECTS_DIR || '/host/claude-proje
 const ANSI_RE           = /\x1b\[[0-9;]*m/g;
 const CONTEXT_WINDOW    = 200000; // Claude model context window (tokens)
 const COMPACT_THRESHOLD = 165000; // Claude Code auto-compact trigger
+const CLAUDE_STATUS_FILE= path.join(DATA_DIR, 'claude-status.json');
 
 // ─── Unix socket HTTP helper ─────────────────────────────────────────────────
 
@@ -415,6 +416,13 @@ interface ExhaustionEvent {
   resetTs: number | null;
 }
 
+interface ClaudeStatus {
+  state?: string;
+  resetAt?: string;
+  message?: string;
+  timestamp?: string;
+}
+
 function readExhaustionEvents(): ExhaustionEvent[] {
   try {
     return readFileSync(EXHAUSTION_LOG, 'utf-8')
@@ -427,6 +435,61 @@ function computeLearnedLimit(events: ExhaustionEvent[]): number | null {
   if (!events.length) return null;
   const vals = events.map(e => e.out5hAtHit).sort((a, b) => a - b);
   return vals[Math.floor(vals.length / 2)]; // Median — robust gegen Ausreißer
+}
+
+function readClaudeStatus(): ClaudeStatus | null {
+  try {
+    if (!existsSync(CLAUDE_STATUS_FILE)) return null;
+    return JSON.parse(readFileSync(CLAUDE_STATUS_FILE, 'utf-8')) as ClaudeStatus;
+  } catch {
+    return null;
+  }
+}
+
+function parseBerlinResetTime(rawText: string, anchorTs: number): number | null {
+  if (!rawText) return null;
+
+  const absTs = Date.parse(rawText);
+  if (!Number.isNaN(absTs)) return absTs;
+
+  const epochMatch = rawText.trim().match(/^\d{10,13}$/);
+  if (epochMatch) {
+    const n = parseInt(epochMatch[0], 10);
+    return epochMatch[0].length === 13 ? n : n * 1000;
+  }
+
+  const text = rawText
+    .replace(/resets?/i, '')
+    .replace(/^\s*um\s+/i, '')
+    .trim();
+
+  const m = text.match(/(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*uhr)?/i);
+  if (!m) return null;
+
+  let hour = parseInt(m[1], 10);
+  const minute = parseInt(m[2] || '0', 10);
+  const ampm = (m[3] || '').toLowerCase();
+
+  if (ampm === 'pm' && hour !== 12) hour += 12;
+  if (ampm === 'am' && hour === 12) hour = 0;
+  if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+
+  const fmt = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Europe/Berlin',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: false,
+  });
+
+  // Minute-scan to map local wall-clock time to epoch robustly across DST.
+  for (let off = 0; off <= 48 * 60; off++) {
+    const t = anchorTs + off * 60000;
+    const s = fmt.format(new Date(t));
+    const parts = s.split(':');
+    if (parseInt(parts[0], 10) % 24 === hour && parseInt(parts[1], 10) === minute)
+      return t - (t % 60000);
+  }
+  return null;
 }
 
 function collectRateLimitMetrics() {
@@ -610,8 +673,18 @@ function collectRateLimitMetrics() {
   const activeDays = new Set(events7d.map(([ts]) => Math.floor(ts / 86400000))).size;
   const dailyAvg = activeDays > 0 ? Math.round(out7d / activeDays) : 0;
 
-  const extraResetTs = lastExtraHitMsg && lastExtraHitTs !== null ? parseExtraReset(lastExtraHitMsg, lastExtraHitTs) : null;
-  const extraLimited = extraResetTs !== null && extraResetTs > now;
+  let extraResetTs = lastExtraHitMsg && lastExtraHitTs !== null ? parseExtraReset(lastExtraHitMsg, lastExtraHitTs) : null;
+  const status = readClaudeStatus();
+  const statusAnchorTs = status?.timestamp ? (Date.parse(status.timestamp) || now) : now;
+  const statusResetTs = status?.resetAt ? parseBerlinResetTime(status.resetAt, statusAnchorTs) : null;
+  if (status?.state === 'limited' && statusResetTs && statusResetTs > now) {
+    extraResetTs = statusResetTs;
+    if (status.message) lastExtraHitMsg = status.message;
+  }
+  const extraLimited = (
+    (status?.state === 'limited' && (statusResetTs === null || statusResetTs > now)) ||
+    (extraResetTs !== null && extraResetTs > now)
+  );
 
   // Burn-Rate (Tokens/min) über die letzten 60 Minuten — Quelle: Maciek
   const burnWindowMs = 3_600_000;

@@ -201,6 +201,10 @@ const badge=(t,c)=>`<span class="badge b${c}">${esc(t)}</span>`;
 const sbadge=s=>{const m={running:'g',idle:'b',active:'g',stopped:'x',error:'r',exited:'r'};return badge(s||'–',m[s]||'x');};
 function rel(ts){if(!ts)return'–';const diff=(Date.now()-+new Date(ts))/1000;if(diff<0)return'future';if(diff<60)return Math.floor(diff)+'s ago';if(diff<3600)return Math.floor(diff/60)+'m ago';if(diff<86400)return Math.floor(diff/3600)+'h ago';return new Date(ts).toLocaleDateString();}
 const relMs=ms=>ms?rel(new Date(ms).toISOString()):'–';
+function fmtClock(ts){
+  if(!ts) return '–';
+  return new Date(ts).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit',timeZone:'Europe/Berlin'})+' Uhr';
+}
 function fmtB(b){if(!b)return'0 B';if(b>1e12)return(b/1e12).toFixed(1)+' TB';if(b>1e9)return(b/1e9).toFixed(1)+' GB';if(b>1e6)return(b/1e6).toFixed(1)+' MB';if(b>1e3)return(b/1e3).toFixed(1)+' KB';return b+' B';}
 function fmtRate(r){if(!r)return'0 B/s';if(r>1e6)return(r/1e6).toFixed(1)+' MB/s';if(r>1e3)return(r/1e3).toFixed(1)+' KB/s';return Math.round(r)+' B/s';}
 function fmtTok(n){if(!n)return'0';if(n>=1e6)return(n/1e6).toFixed(2)+'M';if(n>=1e3)return(n/1e3).toFixed(1)+'k';return String(n);}
@@ -508,11 +512,12 @@ function renderRateLimits(){
   const eu=rl.extraUsage||{};
   if(eu.limited){
     const resetIn=eu.resetTs?eu.resetTs-Date.now():0;
-    const resetM=Math.round(resetIn/60000);
+    const resetM=Math.max(0,Math.round(resetIn/60000));
+    const resetAt=eu.resetTs?fmtClock(eu.resetTs):'unbekannt';
     html+=`<div style="margin-top:10px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;display:flex;align-items:center;gap:10px">`;
     html+=`<span style="font-size:16px">⛔</span>`;
     html+=`<div><div style="font-weight:600;color:var(--rd)">Extra Usage erschöpft</div>`;
-    html+=`<div class="mu" style="font-size:11px">${eu.message||''} · Reset in <strong>${resetM}m</strong></div></div>`;
+    html+=`<div class="mu" style="font-size:11px">${eu.message||''} · Reset um <strong>${resetAt}</strong>${eu.resetTs?` (in ${resetM}m)`:''}</div></div>`;
     html+=`</div>`;
   } else if(eu.lastHitTs){
     const agoM=Math.round((Date.now()-eu.lastHitTs)/60000);
@@ -531,15 +536,14 @@ function renderRateLimits(){
     const sessionPct=barLimit5h>0?Math.min(100,Math.round((w5h.outputTokens||0)/barLimit5h*100)):null;
     const calOut=rl.weekly.outputTokens||0;
     const weeklyPct=rl.limits.d7>0?Math.min(100,Math.round(calOut/rl.limits.d7*100)):null;
-    function nextThursdayNight(){
-      const n=new Date(),d=n.getDay(),t=new Date(n);
-      t.setDate(n.getDate()+(4-d+7)%7);t.setHours(23,59,0,0);
-      if(t<=n) t.setDate(t.getDate()+7);
-      return t;
-    }
-    const thu=nextThursdayNight();
-    const weeklyResetStr=thu.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'})+' 23:59';
-    const reset5hStr=w5h.resetInMs>0?`Zurücksetzen in ${Math.floor(w5h.resetInMs/60000)}m`:'kein aktiver Block';
+    const weeklyResetTs=rl.weekly?.calWeekCutoff?rl.weekly.calWeekCutoff+7*86400000:null;
+    const weeklyResetStr=weeklyResetTs
+      ?new Date(weeklyResetTs).toLocaleString('de-DE',{timeZone:'Europe/Berlin',weekday:'short',day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'})+' Uhr'
+      :'unbekannt';
+    const reset5hTs=w5h.resetInMs>0?Date.now()+w5h.resetInMs:null;
+    const reset5hStr=reset5hTs
+      ?`Zurücksetzen um ${fmtClock(reset5hTs)} (in ${Math.floor(w5h.resetInMs/60000)}m)`
+      :'kein aktiver Block';
     function ucard(title,sub,pct,tokens,limit,resetLine,note){
       const safeP=Math.min(100,pct!=null?pct:0);
       const pfCls=pct>=80?'crit':pct>=60?'warn':'ok';
