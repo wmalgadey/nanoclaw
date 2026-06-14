@@ -33,8 +33,6 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 .mono{font-family:monospace;font-size:11px} .mu{color:var(--mu)}
 .empty{padding:18px;text-align:center;color:var(--mu)}
 .msgbox{background:#0a0c12;border-radius:4px;padding:5px 8px;font-family:monospace;font-size:10px;max-height:80px;overflow:auto;white-space:pre-wrap;word-break:break-all;color:#94a3b8}
-#logwrap{background:#080a10;border-radius:6px;padding:10px;height:580px;overflow-y:auto;font-family:monospace;font-size:11px;line-height:1.6}
-.ll{padding:0} .ll.error,.ll.fatal{color:var(--rd)} .ll.warn{color:var(--yw)} .ll.info{color:#94a3b8} .ll.debug{color:#3f4f60}
 .sel{background:var(--sf);border:1px solid var(--bd);color:var(--tx);padding:5px 10px;border-radius:6px;font-size:12px;width:100%;margin-bottom:12px}
 .btn{padding:4px 12px;background:var(--ac);border:none;border-radius:5px;color:#fff;cursor:pointer;font-size:11px}
 .two{display:grid;grid-template-columns:1fr 1fr;gap:12px}
@@ -72,13 +70,9 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 <nav>
   <button class="tab active" onclick="show('overview',this)">Overview</button>
   <button class="tab" onclick="show('system',this)">System</button>
-  <button class="tab" onclick="show('agents',this)">Agents</button>
+  <button class="tab" onclick="show('details',this)">Details</button>
   <button class="tab" onclick="show('tokens',this)">Tokens</button>
-  <button class="tab" onclick="show('sessions',this)">Sessions</button>
-  <button class="tab" onclick="show('channels',this)">Channels</button>
-  <button class="tab" onclick="show('users',this)">Users</button>
   <button class="tab" onclick="show('messages',this)">Messages</button>
-  <button class="tab" onclick="show('logs',this)">Logs</button>
 </nav>
 <main>
 
@@ -86,22 +80,30 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
 <div id="tab-overview" class="tc active">
   <div id="alerts"></div>
   <div class="grid" id="stats"></div>
-  <div id="log-metrics"></div>
   <div class="sec">
-    <div class="sh">Containers <span class="cnt" id="ct-cnt"></span></div>
+    <div class="sh">Containers <span class="cnt" id="ct-cnt"></span> <a href="#" onclick="goTab('details');return false" style="font-size:11px;color:var(--ac);text-decoration:none;font-weight:400">Details →</a></div>
     <table><thead><tr><th>Name</th><th>Image</th><th>State</th><th>CPU</th><th>Memory</th><th>Status</th></tr></thead>
     <tbody id="ct-body"></tbody></table>
   </div>
   <div class="sec">
-    <div class="sh">Agent Groups</div>
+    <div class="sh">Agent Groups <a href="#" onclick="goTab('details');return false" style="font-size:11px;color:var(--ac);text-decoration:none;font-weight:400">Details →</a></div>
     <table><thead><tr><th>Name</th><th>Folder</th><th>Provider</th><th>Sessions</th><th>Wirings</th></tr></thead>
     <tbody id="ag-body"></tbody></table>
   </div>
 </div>
 
-<!-- AGENTS -->
-<div id="tab-agents" class="tc">
+<!-- DETAILS (Agents + Channels + Users) -->
+<div id="tab-details" class="tc">
   <div id="agents-content"></div>
+  <div class="sec" style="margin-bottom:14px">
+    <div class="sh">Channels <span class="cnt" id="ch-cnt"></span></div>
+    <div id="ch-content"></div>
+  </div>
+  <div class="sec">
+    <div class="sh">Users <span class="cnt" id="usr-cnt"></span></div>
+    <table><thead><tr><th>ID</th><th>Kind</th><th>Display Name</th><th>Privilege</th><th>Roles</th><th>Created</th></tr></thead>
+    <tbody id="usr-body"></tbody></table>
+  </div>
 </div>
 
 <!-- TOKENS -->
@@ -113,10 +115,6 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
   <div class="sec" style="margin-bottom:14px" id="rl-section">
     <div class="sh">Rate-Limit-Fenster</div>
     <div id="rl-content" style="padding:12px 14px"></div>
-  </div>
-  <div class="sec" style="margin-bottom:14px" id="rl-net-section">
-    <div class="sh">Netto-Fenster <span class="cnt">Output − Cache-Reads</span></div>
-    <div id="rl-net-content" style="padding:12px 14px"></div>
   </div>
   <div class="grid" id="tok-summary"></div>
   <div class="sec">
@@ -185,51 +183,18 @@ tr:last-child td{border-bottom:none} tr:hover td{background:rgba(255,255,255,.01
   </div>
 </div>
 
-<!-- SESSIONS -->
-<div id="tab-sessions" class="tc">
-  <div class="sh" style="padding:0 0 10px">Sessions <span class="cnt" id="sess-cnt"></span></div>
-  <div id="sess-cards"></div>
-</div>
-
-<!-- CHANNELS -->
-<div id="tab-channels" class="tc"><div id="ch-content"></div></div>
-
-<!-- USERS -->
-<div id="tab-users" class="tc">
-  <div class="sec">
-    <div class="sh">Users <span class="cnt" id="usr-cnt"></span></div>
-    <table><thead><tr><th>ID</th><th>Kind</th><th>Display Name</th><th>Privilege</th><th>Roles</th><th>Created</th></tr></thead>
-    <tbody id="usr-body"></tbody></table>
-  </div>
-</div>
-
 <!-- MESSAGES -->
 <div id="tab-messages" class="tc">
-  <select class="sel" id="sess-sel" onchange="renderMsgs()"><option value="">Select a session…</option></select>
+  <select class="sel" id="sess-sel" onchange="renderMsgs()"><option value="">Session auswählen…</option></select>
   <div id="msg-content"></div>
-</div>
-
-<!-- LOGS -->
-<div id="tab-logs" class="tc">
-  <div style="display:flex;align-items:center;gap:14px;margin-bottom:10px">
-    <label class="mu" style="font-size:12px"><input type="checkbox" id="autoscroll" checked> Auto-scroll</label>
-    <label class="mu" style="font-size:12px">Level:
-      <select id="log-lvl" style="background:var(--sf);border:1px solid var(--bd);color:var(--tx);padding:2px 6px;border-radius:4px;font-size:11px">
-        <option value="debug">debug</option><option value="info" selected>info</option>
-        <option value="warn">warn</option><option value="error">error</option>
-      </select>
-    </label>
-    <button class="btn" onclick="clearLogs()">Clear</button>
-    <span id="log-status" class="mu" style="font-size:11px"></span>
-  </div>
-  <div id="logwrap"></div>
 </div>
 
 </main>
 <script>
 let D=null;
 
-function show(n,btn){document.querySelectorAll('.tc').forEach(e=>e.classList.remove('active'));document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));document.getElementById('tab-'+n).classList.add('active');btn.classList.add('active');if(n==='logs'&&!logsStarted)startLogs();}
+function show(n,btn){document.querySelectorAll('.tc').forEach(e=>e.classList.remove('active'));document.querySelectorAll('.tab').forEach(e=>e.classList.remove('active'));document.getElementById('tab-'+n).classList.add('active');btn.classList.add('active');}
+function goTab(n){const b=document.querySelector(`.tab[onclick*="'${n}'"]`);if(b)show(n,b);}
 
 const esc=s=>String(s??'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 const badge=(t,c)=>`<span class="badge b${c}">${esc(t)}</span>`;
@@ -245,7 +210,7 @@ function kv(rows){return rows.map(([k,v])=>`<div style="display:flex;gap:8px;mar
 function parse(c){if(!c)return'';try{const p=JSON.parse(c);if(typeof p==='string')return p;if(p?.text)return p.text;if(Array.isArray(p)){const t=p.filter(x=>x?.type==='text').map(x=>x.text);if(t.length)return t.join('\n');}return JSON.stringify(p,null,2);}catch{return c;}}
 
 async function load(){try{D=await fetch('/api/data').then(r=>r.json());document.getElementById('upd').textContent='Updated: '+new Date(D.timestamp).toLocaleTimeString();render();}catch(e){document.getElementById('upd').textContent='⚠ '+e.message;}}
-function render(){if(!D)return;renderOverview();renderSystem();renderAgents();renderTokens();renderSessions();renderChannels();renderUsers();refreshMsgList();}
+function render(){if(!D)return;renderOverview();renderSystem();renderAgents();renderTokens();renderChannels();renderUsers();refreshMsgList();}
 
 // ── alerts ────────────────────────────────────────────────────────────────────
 function renderAlerts(){
@@ -276,7 +241,7 @@ function renderAlerts(){
   else if(load?.load1>cpuN) alerts.push({sev:'yw',cat:'Load',msg:`Load hoch: ${load.load1} bei ${cpuN} CPUs`});
 
   // Security updates
-  const aptSec=updates?.apt?.security||0,aptEsmA=updates?.apt?.esm||0;
+  const aptSec=updates?.apt?.security||0;
   if(aptSec>0) alerts.push({sev:'yw',cat:'Updates',msg:`${aptSec} Sicherheitsupdates verfügbar (apt)`});
   const aptOther=(updates?.apt?.count||0);
   if(aptOther>0) alerts.push({sev:'bl',cat:'Updates',msg:`${aptOther} Paketupdates verfügbar (apt)`});
@@ -324,7 +289,41 @@ function renderAlerts(){
 }
 
 // ── overview ──────────────────────────────────────────────────────────────────
-// ── agents ────────────────────────────────────────────────────────────────────
+function renderOverview(){
+  renderAlerts();
+  const sess=D.sessions||[],active=sess.filter(s=>s.container_status==='running'||s.container_status==='idle');
+  const cts=D.containers||[],ncRun=cts.filter(c=>c.isNanoclaw&&c.state==='running');
+  const sys=D.system||{};
+  const tm=D.token_metrics||{};
+  const tmOut=tm.totalOutput||0,tmCR=tm.overallCacheHit??'–';
+  const msgsToday=(D.session_data||[]).reduce((sum,sd)=>sum+((sd.msgMetrics?.today)||0),0);
+  document.getElementById('stats').innerHTML=[
+    {t:'Agent Groups',       v:(D.agent_groups||[]).length},
+    {t:'Active Sessions',    v:active.length,c:active.length?'gn':''},
+    {t:'NanoClaw Containers',v:ncRun.length,c:ncRun.length?'gn':''},
+    {t:'All Running',        v:cts.filter(c=>c.state==='running').length},
+    {t:'Messages Today',     v:msgsToday,c:msgsToday>0?'bl':''},
+    {t:'CPU',                v:(sys.cpu?.overall??'–')+'%',c:sys.cpu?.overall>=80?'rd':sys.cpu?.overall>=60?'yw':'gn'},
+    {t:'RAM Used',           v:sys.memory?fmtB(sys.memory.used):'–'},
+    {t:'Output Tokens',      v:fmtTok(tmOut)},
+    {t:'Cache Hit Rate',     v:tmCR+'%',c:tmCR>=60?'gn':tmCR>=30?'yw':'rd'},
+  ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
+
+  document.getElementById('ct-cnt').textContent=cts.length+' total';
+  document.getElementById('ct-body').innerHTML=cts.length?cts.map(c=>{
+    const s=c.stats;
+    const cpuH=s?`<div class="brow" style="gap:5px"><div class="pb" style="width:56px"><div class="pf ${pbc(s.cpuPercent)}" style="width:${Math.min(s.cpuPercent,100)}%"></div></div><span class="mu" style="font-size:10px">${s.cpuPercent}%</span></div>`:c.state==='running'?'…':'–';
+    const memH=s?`<div class="brow" style="gap:5px"><div class="pb" style="width:56px"><div class="pf ${pbc(s.memPercent)}" style="width:${Math.min(s.memPercent,100)}%"></div></div><span class="mu" style="font-size:10px">${fmtB(s.memUsage)}</span></div>`:'–';
+    return`<tr><td>${esc((c.names||[]).join(', '))} ${c.isNanoclaw?badge('nanoclaw','p'):''}</td><td class="mono mu" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.image)}</td><td>${sbadge(c.state)}</td><td style="min-width:110px">${cpuH}</td><td style="min-width:110px">${memH}</td><td class="mu">${esc(c.status)}</td></tr>`;
+  }).join(''):'<tr><td colspan="6" class="empty">No containers</td></tr>';
+
+  document.getElementById('ag-body').innerHTML=(D.agent_groups||[]).map(g=>{
+    const gW=(D.wirings||[]).filter(w=>w.agent_group_id===g.id),gS=(D.sessions||[]).filter(s=>s.agent_group_id===g.id);
+    return`<tr><td><strong>${esc(g.name)}</strong></td><td class="mono">${esc(g.folder)}</td><td>${badge(g.agent_provider||'claude','b')}</td><td>${gS.length}</td><td class="mu">${gW.map(w=>esc(w.channel_type)+':'+esc(w.platform_id)).join(', ')||'–'}</td></tr>`;
+  }).join('')||'<tr><td colspan="5" class="empty">No agent groups</td></tr>';
+}
+
+// ── agents (details tab) ──────────────────────────────────────────────────────
 function renderAgents(){
   const agents=D.agent_detail||[];
   const el=document.getElementById('agents-content');
@@ -332,21 +331,21 @@ function renderAgents(){
 
   const now=Date.now();
   el.innerHTML=agents.map(ag=>{
-    // Find most-recent session for this agent group
     const agSessions=(D.sessions||[]).filter(s=>s.agent_group_id===ag.id);
     const activeSession=agSessions.find(s=>s.container_status==='running'||s.container_status==='idle');
-    const latestSession=agSessions[0]; // already sorted by last_active DESC
+    const latestSession=agSessions[0];
 
-    // Heartbeat: look in session_data
-    let heartbeatMs=null;
+    // Heartbeat + msg metrics from session_data
+    let heartbeatMs=null,msgMetrics=null,sessionCreatedAt=null;
     if(latestSession){
       const sd=(D.session_data||[]).find(d=>d.sessionId===latestSession.id);
       if(sd?.heartbeatMs) heartbeatMs=sd.heartbeatMs;
+      if(sd?.msgMetrics) msgMetrics=sd.msgMetrics;
+      sessionCreatedAt=latestSession.created_at||null;
     }
 
-    // Token metrics: match agent sessions by agentGroupId
+    // Token metrics
     const agTokens=(D.token_metrics?.sessions||[]).filter(s=>s.kind==='agent'&&s.agentGroupId===ag.id);
-    // Pick the one with the most recent lastTs (sessions are already sorted)
     const tok=agTokens[0]||null;
 
     // Session status
@@ -354,6 +353,16 @@ function renderAgents(){
     const statusBadge=isRunning?badge('active','g'):badge('stopped','x');
     const lastActive=latestSession?rel(latestSession.last_active):'–';
     const hbText=heartbeatMs?(now-heartbeatMs<300000?badge('live','g'):'<span class="mu" style="font-size:11px">'+relMs(heartbeatMs)+'</span>'):'–';
+
+    // Session age
+    let ageStr='';
+    if(sessionCreatedAt){
+      const createdMs=new Date(sessionCreatedAt).getTime();
+      const endMs=isRunning?now:(latestSession?.last_active?new Date(latestSession.last_active).getTime():now);
+      const ms=endMs-createdMs;
+      const d=Math.floor(ms/86400000),h=Math.floor((ms%86400000)/3600000),m=Math.floor((ms%3600000)/60000);
+      ageStr=d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;
+    }
 
     // Wirings section
     let wiringsHtml='';
@@ -397,6 +406,20 @@ function renderAgents(){
       </div>`;
     }
 
+    // Message stats row (from session_data)
+    let msgHtml='';
+    if(msgMetrics){
+      const mm=msgMetrics;
+      msgHtml=`<div style="margin-top:8px;font-size:12px;padding-top:8px;border-top:1px solid var(--bd)">
+        <span class="mu" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-right:8px">Nachrichten</span>
+        <span style="color:${mm.today>0?'var(--gn)':'var(--mu)'}"><strong>${mm.today}</strong> heute</span>
+        <span class="mu"> · ${mm.last7d} diese Woche · ${mm.total} gesamt</span>
+        ${mm.pending>0?` · <span style="color:var(--yw)">${mm.pending} ausstehend</span>`:''}
+        ${mm.medianResponseMs?` · ⌀ ${fmtMs2(mm.medianResponseMs)} Antwortzeit`:''}
+        ${ageStr?`<span class="mu" style="margin-left:12px">Session-Alter: ${ageStr}</span>`:''}
+      </div>`;
+    }
+
     return`<div class="sec" style="margin-bottom:14px">
       <div class="sh">
         <span>${esc(ag.name)}</span>
@@ -418,31 +441,24 @@ function renderAgents(){
         </div>
         ${contextHtml}
         ${tokHtml}
+        ${msgHtml}
       </div>
     </div>`;
   }).join('');
 }
 
 // ── rate limits ───────────────────────────────────────────────────────────────
-function fmtMs(ms){const h=Math.floor(ms/3600000),m=Math.floor(ms%3600000/60000);return h>0?`${h}h ${m}m`:`${m}m`;}
 function renderRateLimits(){
   const rl=D.rate_limits;
   const el=document.getElementById('rl-content');
   if(!rl){el.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';return;}
 
   const ctx=rl.context||{};
-  const burn=rl.burn||{};
   const plan=rl.plan||{};
   const w5h=rl.window5h||{};
-  const learned=rl.learned||{};
 
-  // ETA-Farbcode (rot < 30min, gelb < 2h, sonst grün)
-  function etaColor(ms){return ms<1800000?'rd':ms<7200000?'yw':'gn';}
-  function etaTxt(ms){return ms===null||ms===undefined?null:ms<60000?'<1m':fmtMs(ms);}
-
-  // Bar mit optionalem Pacing-Marker + ETA/Projected-Footer
-  function bar(label,tokens,limit,ref,extra,opts){
-    opts=opts||{};
+  // Simple bar: label, measured tokens, optional limit
+  function bar(label,tokens,limit,ref,extra){
     let html=`<div style="margin-bottom:14px">`;
     html+=`<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">`;
     html+=`<span style="font-size:12px;font-weight:600">${label}</span>`;
@@ -450,11 +466,7 @@ function renderRateLimits(){
       const pct=Math.min(100,Math.round(tokens/limit*100));
       html+=`<span style="font-size:12px">${fmtTok(tokens)} / ${fmtTok(limit)} <span class="mu">(${pct}%)</span></span>`;
       html+=`</div>`;
-      // Balken mit optionalem Time-Pacing-Marker
-      const paceMark=(opts.timePct!=null)
-        ?`<div style="position:absolute;left:${Math.min(100,opts.timePct)}%;top:-2px;bottom:-2px;width:1px;background:var(--tx);opacity:.55" title="Zeit im 5h-Block: ${opts.timePct}%"></div>`:'';
-      const bgTint=opts.pacingWarn?'background:rgba(234,179,8,.2)':'';
-      html+=`<div class="pb" style="position:relative;${bgTint}"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div>${paceMark}</div>`;
+      html+=`<div class="pb"><div class="pf ${pbc(pct)}" style="width:${pct}%"></div></div>`;
     } else if(ref&&ref.value>0){
       const pct=Math.min(100,Math.round(tokens/ref.value*100));
       html+=`<span style="font-size:12px">${fmtTok(tokens)} <span class="mu">vs ${ref.label} ${fmtTok(ref.value)}</span></span>`;
@@ -463,63 +475,71 @@ function renderRateLimits(){
     } else {
       html+=`<span style="font-size:12px">${fmtTok(tokens)} tokens</span></div>`;
     }
-    // Footer: Projected + ETA + zusätzliche extras
-    const footerParts=[];
-    if(opts.projected!=null) footerParts.push(`<span class="mu" style="font-size:11px">Projected: <strong style="color:var(--tx)">${fmtTok(opts.projected)}</strong></span>`);
-    if(opts.etaMs!=null && limit>0 && tokens<limit){
-      const c=etaColor(opts.etaMs);
-      footerParts.push(`<span class="mu" style="font-size:11px">ETA bis Limit: <strong style="color:var(--${c})">${etaTxt(opts.etaMs)}</strong>${c==='rd'?' ⚠':''}</span>`);
-    }
-    if(opts.pacingWarn) footerParts.push(`<span style="font-size:11px;color:var(--yw)">⚠ Verbrauch läuft Zeit voraus</span>`);
-    if(extra) footerParts.push(extra);
-    if(footerParts.length) html+=`<div style="display:flex;flex-wrap:wrap;gap:14px;margin-top:4px">${footerParts.join('')}</div>`;
+    if(extra) html+=`<div style="margin-top:4px">${extra}</div>`;
     html+=`</div>`;
     return html;
   }
 
-  // Header-Zeile: Plan-Badge + Burn-Rate + Learned-Badge
+  // Plan badge in header
   let header='';
   if(plan.name){
     header+=`<span class="badge bp" title="Quelle: ${esc(plan.source)}">Plan: ${esc(plan.name)} · ${esc(plan.source)}</span>`;
   } else if(plan.source==='limit-env'){
     header+=`<span class="badge bb">Limits via env</span>`;
   }
-  if(burn.perMin>0){
-    header+=`<span class="badge bg" style="margin-left:6px">Burn: ${fmtTok(Math.round(burn.perHour))}/h</span>`;
-  }
-  if(learned.eventCount>0){
-    const limitActive=!rl.limits.h5&&learned.dynLimit5h===learned.limit5h;
-    const limitLabel=rl.limits.h5?'durch Limit-Env überschrieben':limitActive?'aktiv':'Fallback: Plan-Tabelle';
-    const limitTitle=`Gelerntes Limit aus ${learned.eventCount} gemessenen Erschöpfungs-Ereignissen · ${limitLabel}`;
-    header+=`<span class="badge" style="margin-left:6px;background:rgba(139,92,246,.15);color:var(--pp);border:1px solid rgba(139,92,246,.35)" title="${limitTitle}">`
-      +`Gelernt: ~${fmtTok(learned.limit5h)} · ${learned.eventCount}× · ${limitLabel}</span>`;
-  }
   let html='';
   if(header) html+=`<div style="margin-bottom:12px">${header}</div>`;
 
-  const resetNote=w5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${fmtMs(w5h.resetInMs)}</span>`:'';
-  const blockNote=w5h.blockEndTs?`<span class="mu" style="font-size:11px">5h-Block endet in ${fmtMs(Math.max(0,w5h.blockEndTs-Date.now()))}</span>`:'';
-  const barLimit5h=rl.limits.h5||learned.dynLimit5h||plan.h5||0;
+  const barLimit5h=rl.limits.h5||plan.h5||0;
+  const resetNote=w5h.resetInMs>0?`<span class="mu" style="font-size:11px">Ältester Token läuft aus in ${Math.floor(w5h.resetInMs/60000)}m</span>`:'';
 
-  // ── Nutzungsstatus-Block (claude.ai-Vergleich) ──────────────────
+  html+=bar('Letzte 5h (rolling)',w5h.outputTokens||0,barLimit5h,
+    ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null,resetNote||undefined);
+  html+=bar('Heute (UTC)',rl.daily.outputTokens||0,rl.limits.h24||0,
+    ctx.dailyAvg?{value:ctx.dailyAvg,label:'∅ 7d'}:null);
+  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens||0,rl.limits.d7||0,null,
+    ctx.activeDays?`<span class="mu" style="font-size:11px">${ctx.activeDays} aktive Tage</span>`:undefined);
+
+  if(!rl.limits.h5&&!rl.limits.h24&&!plan.h5){
+    html+=`<div style="margin-top:4px;font-size:11px;color:var(--mu)">Kein Cap konfiguriert — Balken zeigen Vergleich zum historischen Peak / Ø. Setze <code>CLAUDE_PLAN=pro|max5x|max20x</code> oder <code>CLAUDE_*_LIMIT</code> als env.</div>`;
+  }
+
+  // Extra usage status (actual state, not forecast)
+  const eu=rl.extraUsage||{};
+  if(eu.limited){
+    const resetIn=eu.resetTs?eu.resetTs-Date.now():0;
+    const resetM=Math.round(resetIn/60000);
+    html+=`<div style="margin-top:10px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;display:flex;align-items:center;gap:10px">`;
+    html+=`<span style="font-size:16px">⛔</span>`;
+    html+=`<div><div style="font-weight:600;color:var(--rd)">Extra Usage erschöpft</div>`;
+    html+=`<div class="mu" style="font-size:11px">${eu.message||''} · Reset in <strong>${resetM}m</strong></div></div>`;
+    html+=`</div>`;
+  } else if(eu.lastHitTs){
+    const agoM=Math.round((Date.now()-eu.lastHitTs)/60000);
+    html+=`<div style="margin-top:10px;font-size:11px;color:var(--mu)">Letzter Extra-Usage-Hit: ${agoM}m ago</div>`;
+  }
+
+  // Insights link
+  html+=`<div style="margin-top:12px;font-size:12px"><a href="/insights/latest" target="_blank" style="color:var(--ac)">📊 Claude Insights Report öffnen</a> <span class="mu">(wöchentlich via Cron)</span></div>`;
+
+  el.innerHTML=html;
+
+  // Nutzungsstatus block
   (function(){
     const usel=document.getElementById('rl-usage-content');
     if(!usel) return;
     const sessionPct=barLimit5h>0?Math.min(100,Math.round((w5h.outputTokens||0)/barLimit5h*100)):null;
-    // Rolling 7d output — claude.ai also counts web/desktop which we can't see, so % will differ
     const calOut=rl.weekly.outputTokens||0;
     const weeklyPct=rl.limits.d7>0?Math.min(100,Math.round(calOut/rl.limits.d7*100)):null;
-    // claude.ai displays "Do. 23:59" — Thursday 23:59 = Friday 00:00 minus 1 min
     function nextThursdayNight(){
       const n=new Date(),d=n.getDay(),t=new Date(n);
-      t.setDate(n.getDate()+(4-d+7)%7);t.setHours(23,59,0,0); // 4=Thursday
+      t.setDate(n.getDate()+(4-d+7)%7);t.setHours(23,59,0,0);
       if(t<=n) t.setDate(t.getDate()+7);
       return t;
     }
     const thu=nextThursdayNight();
     const weeklyResetStr=thu.toLocaleDateString('de-DE',{weekday:'short',day:'2-digit',month:'2-digit'})+' 23:59';
-    const weeklyResetMs=thu-Date.now();
-    const reset5hStr=w5h.resetInMs>0?`Zurücksetzen in ${fmtMs(w5h.resetInMs)}`:'kein aktiver Block';
+    const reset5hStr=w5h.resetInMs>0?`Zurücksetzen in ${Math.floor(w5h.resetInMs/60000)}m`:'kein aktiver Block';
     function ucard(title,sub,pct,tokens,limit,resetLine,note){
       const safeP=Math.min(100,pct!=null?pct:0);
       const pfCls=pct>=80?'crit':pct>=60?'warn':'ok';
@@ -543,93 +563,6 @@ function renderRateLimits(){
         'Nur CLI+Container — claude.ai zählt auch Web/Desktop')
       +`</div>`;
   })();
-
-  html+=bar('Letzte 5h (rolling)',w5h.outputTokens, barLimit5h,
-    ctx.peak5h?{value:ctx.peak5h,label:'Peak 7d'}:null, resetNote||blockNote,
-    {timePct:w5h.timePct, pacingWarn:w5h.pacingWarn, projected:w5h.projected, etaMs:w5h.etaToLimitMs});
-  html+=bar('Heute (UTC)',rl.daily.outputTokens,rl.limits.h24,
-    ctx.dailyAvg?{value:ctx.dailyAvg,label:'∅ 7d'}:null, null,
-    {etaMs:rl.daily.etaToLimitMs});
-  html+=bar('Letzte 7 Tage',rl.weekly.outputTokens,rl.limits.d7,null,
-    ctx.activeDays?`<span class="mu" style="font-size:11px">${ctx.activeDays} aktive Tage</span>`:null,
-    {etaMs:rl.weekly.etaToLimitMs});
-
-  if(!rl.limits.h5&&!rl.limits.h24&&!plan.h5&&!learned.dynLimit5h){
-    html+=`<div style="margin-top:4px;font-size:11px;color:var(--mu)">Kein Cap konfiguriert — Balken zeigen Vergleich zum historischen Peak / Ø. Setze <code>CLAUDE_PLAN=pro|max5x|max20x</code> oder <code>CLAUDE_*_LIMIT</code> als env.</div>`;
-  }
-
-  // Extra usage status
-  const eu=rl.extraUsage||{};
-  if(eu.limited){
-    const resetIn=eu.resetTs?eu.resetTs-Date.now():0;
-    html+=`<div style="margin-top:10px;padding:8px 12px;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:12px;display:flex;align-items:center;gap:10px">`;
-    html+=`<span style="font-size:16px">⛔</span>`;
-    html+=`<div><div style="font-weight:600;color:var(--rd)">Extra Usage erschöpft</div>`;
-    html+=`<div class="mu" style="font-size:11px">${eu.message||''} · Reset in <strong>${fmtMs(resetIn)}</strong></div></div>`;
-    html+=`</div>`;
-  } else if(eu.lastHitTs){
-    const ago=Date.now()-eu.lastHitTs;
-    html+=`<div style="margin-top:10px;font-size:11px;color:var(--mu)">Letzter Extra-Usage-Hit: ${fmtMs(ago)} ago</div>`;
-  }
-
-  // Erschöpfungs-Verlauf (Learning-History)
-  if((learned.events||[]).length>0){
-    const evts=[...(learned.events||[])].reverse();
-    html+=`<details style="margin-top:12px"><summary style="font-size:11px;color:var(--mu);cursor:pointer;user-select:none">`;
-    html+=`Erschöpfungs-Verlauf · ${learned.eventCount} Ereignisse · Gelerntes Limit: ~${fmtTok(learned.limit5h)}`;
-    html+=`</summary><div style="margin-top:8px;font-size:11px">`;
-    html+=evts.map(e=>{
-      const d=new Date(e.ts);
-      const dateStr=d.toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
-        +' '+d.toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'});
-      return`<div style="display:flex;gap:12px;padding:4px 0;border-bottom:1px solid var(--bd)"><span class="mu" style="min-width:110px">${dateStr}</span><strong>${fmtTok(e.out5hAtHit)}</strong><span class="mu">Tokens im 5h-Fenster</span></div>`;
-    }).join('');
-    html+=`</div></details>`;
-  }
-
-  // Insights link
-  html+=`<div style="margin-top:12px;font-size:12px"><a href="/insights/latest" target="_blank" style="color:var(--ac)">📊 Claude Insights Report öffnen</a> <span class="mu">(wöchentlich via Cron)</span></div>`;
-
-  el.innerHTML=html;
-
-  // ── Netto-Block (Output + Input + CacheCreate, ohne Cache-Reads) ────────────
-  const nw=rl.netWindows||{};
-  const nel=document.getElementById('rl-net-content');
-  if(nel&&nw.w5h!=null){
-    // Hilfsfunktion: "X% davon Output/Input/Cache"
-    function tokBreak(o,i,cc,cr){
-      if(!o&&!i&&!cc) return '';
-      const tot=o+i+cc+cr;
-      const parts=[];
-      if(o)  parts.push(`Out: ${fmtTok(o)}`);
-      if(i)  parts.push(`In: ${fmtTok(i)}`);
-      if(cc) parts.push(`CacheW: ${fmtTok(cc)}`);
-      if(cr) parts.push(`<span style="color:var(--gn)">−CacheR: ${fmtTok(cr)}</span>`);
-      return`<span class="mu" style="font-size:11px">${parts.join(' · ')}</span>`;
-    }
-    // Header: Cache-Einsparungsrate im 5h-Block
-    let nhtml='';
-    const saveRatio5h=nw.w5h.net>0?Math.round(nw.w5h.cacheRead/(nw.w5h.net+nw.w5h.cacheRead)*100):0;
-    if(nw.w5h.cacheRead>0){
-      nhtml+=`<div style="margin-bottom:12px">`;
-      nhtml+=`<span class="badge bg" title="Durch Prompt-Caching eingespartes Rechen-Volumen im 5h-Fenster">Cache-Savings 5h: ${fmtTok(nw.w5h.cacheRead)} (${saveRatio5h}% der Gesamttokens)</span>`;
-      nhtml+=`</div>`;
-    }
-    // 5h-Netto-Balken: Referenz = 7d-Wert als Vergleichsmaßstab wenn kein Limit
-    const peak7dNet=nw.weekly?.net||0;
-    const ref5hNet=peak7dNet>nw.w5h.net?{value:Math.round(peak7dNet/ctx.activeDays||1),label:'∅ 7d'}:null;
-    nhtml+=bar('Letzte 5h (netto)',nw.w5h.net,0,ref5hNet,
-      tokBreak(nw.w5h.output,nw.w5h.input,nw.w5h.cacheCreate,nw.w5h.cacheRead),
-      {timePct:w5h.timePct});
-    nhtml+=bar('Heute (UTC) netto',nw.daily?.net||0,0,
-      ctx.dailyAvg?{value:Math.round((nw.weekly?.net||0)/(ctx.activeDays||1)),label:'∅ 7d'}:null,
-      tokBreak(nw.daily?.output,nw.daily?.input,nw.daily?.cacheCreate,nw.daily?.cacheRead),{});
-    nhtml+=bar('Letzte 7 Tage (netto)',nw.weekly?.net||0,0,null,
-      tokBreak(nw.weekly?.output,nw.weekly?.input,nw.weekly?.cacheCreate,nw.weekly?.cacheRead),{});
-    nel.innerHTML=nhtml;
-  } else if(nel){
-    nel.innerHTML='<div class="mu" style="font-size:12px">Keine Daten</div>';
-  }
 }
 
 // ── tokens ────────────────────────────────────────────────────────────────────
@@ -639,20 +572,17 @@ function renderTokens(){
   const sessions=(tm.sessions||[]);
   const compact=165000,full=200000;
 
-  // Summary cards
-  const burnH=Math.round((D.rate_limits?.burn?.perHour)||0);
+  // Summary cards (only accurately measurable values)
   document.getElementById('tok-summary').innerHTML=[
-    {t:'Burn-Rate (60 min)', v:burnH>0?fmtTok(burnH)+'/h':'—', c:burnH>0?'bl':''},
-    {t:'Output Tokens',     v:fmtTok(tm.totalOutput||0)},
-    {t:'Input Tokens',      v:fmtTok(tm.totalInput||0)},
-    {t:'Cache Reads',       v:fmtTok(tm.totalCacheRead||0)},
-    {t:'Cache Created',     v:fmtTok(tm.totalCacheCreate||0)},
-    {t:'Cache Hit Rate',    v:(tm.overallCacheHit??0)+'%', c:tm.overallCacheHit>=60?'gn':tm.overallCacheHit>=30?'yw':'rd'},
-    {t:'Sessions tracked',  v:sessions.length},
+    {t:'Output Tokens',  v:fmtTok(tm.totalOutput||0)},
+    {t:'Input Tokens',   v:fmtTok(tm.totalInput||0)},
+    {t:'Cache Reads',    v:fmtTok(tm.totalCacheRead||0)},
+    {t:'Cache Created',  v:fmtTok(tm.totalCacheCreate||0)},
+    {t:'Cache Hit Rate', v:(tm.overallCacheHit??0)+'%', c:tm.overallCacheHit>=60?'gn':tm.overallCacheHit>=30?'yw':'rd'},
+    {t:'Sessions tracked',v:sessions.length},
   ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
 
-  // Context windows — one bar per session
-  // CLI sessions only in the token table (agent sessions shown in Sessions tab)
+  // CLI session table
   const cliSessions=sessions.filter(s=>s.kind==='cli');
   document.getElementById('tok-all-cnt').textContent=cliSessions.length+' CLI sessions';
   document.getElementById('tok-table').innerHTML=cliSessions.map(s=>{
@@ -670,97 +600,6 @@ function renderTokens(){
       <td class="mu" style="font-size:11px">${rel(s.lastTs)}</td>
     </tr>`;
   }).join('')||'<tr><td colspan="6" class="empty">Keine CLI-Sessions</td></tr>';
-}
-
-function renderLogMetrics(){
-  const lm=(D.system||{}).logMetrics;
-  const el=document.getElementById('log-metrics');
-  if(!lm){el.innerHTML='';return;}
-  const {totals,p1h,p6h,hourly,recentErrors}=lm;
-
-  // SVG bar chart — 24 hourly buckets
-  const maxV=Math.max(1,...hourly.map(h=>h.warn+h.error+h.fatal));
-  const W=480,H=72,bw=Math.floor(W/24)-1;
-  let svgBars='';
-  hourly.forEach((h,i)=>{
-    const x=i*(bw+1);
-    const fH=Math.round(h.fatal/maxV*H),eH=Math.round(h.error/maxV*H),wH=Math.round(h.warn/maxV*H);
-    const tip=`${h.hour}:00 — ${h.error+h.fatal} Errors, ${h.warn} Warns`;
-    svgBars+=`<g><title>${tip}</title>`;
-    if(wH) svgBars+=`<rect x="${x}" y="${H-wH}" width="${bw}" height="${wH}" fill="var(--yw)" opacity=".75"/>`;
-    if(eH) svgBars+=`<rect x="${x}" y="${H-wH-eH}" width="${bw}" height="${eH}" fill="var(--rd)" opacity=".85"/>`;
-    if(fH) svgBars+=`<rect x="${x}" y="${H-wH-eH-fH}" width="${bw}" height="${fH}" fill="var(--pp)" opacity=".9"/>`;
-    svgBars+=`</g>`;
-  });
-  // Axis labels: every 6h
-  let svgLabels='';
-  hourly.forEach((h,i)=>{if(h.hour%6===0){const x=i*(bw+1)+bw/2;svgLabels+=`<text x="${x}" y="${H+11}" font-size="9" fill="var(--mu)" text-anchor="middle">${String(h.hour).padStart(2,'0')}</text>`;}});
-
-  const errC=totals.error+totals.fatal,warnC=totals.warn;
-  el.innerHTML=`<div class="sec" style="margin-bottom:14px">
-  <div class="sh">Log-Aktivität (24h) <span class="cnt">${errC} Errors · ${warnC} Warns</span></div>
-  <div style="padding:12px 14px">
-    <div style="display:flex;gap:20px;margin-bottom:14px;flex-wrap:wrap">
-      <div><div class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Letzte 1h</div>
-        <span style="font-size:18px;font-weight:700;color:${p1h.error>0?'var(--rd)':'var(--gn)'}">${p1h.error}</span><span class="mu" style="font-size:11px"> errors</span>
-        &nbsp;<span style="font-size:18px;font-weight:700;color:${p1h.warn>0?'var(--yw)':'var(--gn)'}">${p1h.warn}</span><span class="mu" style="font-size:11px"> warns</span></div>
-      <div><div class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">Letzte 6h</div>
-        <span style="font-size:18px;font-weight:700;color:${p6h.error>0?'var(--rd)':'var(--gn)'}">${p6h.error}</span><span class="mu" style="font-size:11px"> errors</span>
-        &nbsp;<span style="font-size:18px;font-weight:700;color:${p6h.warn>0?'var(--yw)':'var(--gn)'}">${p6h.warn}</span><span class="mu" style="font-size:11px"> warns</span></div>
-      <div><div class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:3px">24h gesamt</div>
-        <span style="font-size:18px;font-weight:700;color:${errC>0?'var(--rd)':'var(--gn)'}">${errC}</span><span class="mu" style="font-size:11px"> errors</span>
-        &nbsp;<span style="font-size:18px;font-weight:700;color:${warnC>0?'var(--yw)':'var(--gn)'}">${warnC}</span><span class="mu" style="font-size:11px"> warns</span></div>
-      <div style="margin-left:auto;display:flex;align-items:center;gap:10px;font-size:11px">
-        <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--rd);border-radius:2px;display:inline-block;opacity:.85"></span>Error/Fatal</span>
-        <span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;background:var(--yw);border-radius:2px;display:inline-block;opacity:.75"></span>Warn</span>
-      </div>
-    </div>
-    <svg width="${W}" height="${H+14}" style="display:block;overflow:visible">
-      <line x1="0" y1="0" x2="${W}" y2="0" stroke="var(--bd)" stroke-width="1"/>
-      ${svgBars}${svgLabels}
-    </svg>
-    ${recentErrors.length?`<div style="margin-top:12px"><div class="mu" style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Letzte Errors</div>${recentErrors.map(l=>`<div class="msgbox" style="margin-bottom:4px;max-height:32px">${esc(l)}</div>`).join('')}</div>`:''}
-  </div>
-</div>`;
-}
-
-function renderOverview(){
-  renderAlerts();
-  renderLogMetrics();
-  const sess=D.sessions||[],active=sess.filter(s=>s.container_status==='running'||s.container_status==='idle');
-  const cts=D.containers||[],ncRun=cts.filter(c=>c.isNanoclaw&&c.state==='running');
-  const sys=D.system||{};
-  const apt=sys.updates?.apt,snap=sys.updates?.snap;
-  const updCount=(apt?.count||0)+(snap?.count||0);
-  const tm=D.token_metrics||{};
-  const tmOut=tm.totalOutput||0,tmCR=tm.overallCacheHit??'–';
-  const msgsToday=(D.session_data||[]).reduce((sum,sd)=>sum+((sd.msgMetrics?.today)||0),0);
-  const burnH=Math.round(D.rate_limits?.burn?.perHour||0);
-  document.getElementById('stats').innerHTML=[
-    {t:'Agent Groups',      v:(D.agent_groups||[]).length},
-    {t:'Active Sessions',   v:active.length,c:active.length?'gn':''},
-    {t:'NanoClaw Containers',v:ncRun.length,c:ncRun.length?'gn':''},
-    {t:'All Running',       v:cts.filter(c=>c.state==='running').length},
-    {t:'Messages Today',    v:msgsToday,c:msgsToday>0?'bl':''},
-    {t:'CPU',               v:(sys.cpu?.overall??'–')+'%',c:sys.cpu?.overall>=80?'rd':sys.cpu?.overall>=60?'yw':'gn'},
-    {t:'RAM Used',          v:sys.memory?fmtB(sys.memory.used):'–'},
-    {t:'Output Tokens',     v:fmtTok(tmOut)},
-    {t:'Cache Hit Rate',    v:tmCR+'%',c:tmCR>=60?'gn':tmCR>=30?'yw':'rd'},
-    {t:'Burn-Rate (1h)',    v:burnH>0?fmtTok(burnH)+'/h':'—',c:burnH>0?'bl':''},
-  ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
-
-  document.getElementById('ct-cnt').textContent=cts.length+' total';
-  document.getElementById('ct-body').innerHTML=cts.length?cts.map(c=>{
-    const s=c.stats;
-    const cpuH=s?`<div class="brow" style="gap:5px"><div class="pb" style="width:56px"><div class="pf ${pbc(s.cpuPercent)}" style="width:${Math.min(s.cpuPercent,100)}%"></div></div><span class="mu" style="font-size:10px">${s.cpuPercent}%</span></div>`:c.state==='running'?'…':'–';
-    const memH=s?`<div class="brow" style="gap:5px"><div class="pb" style="width:56px"><div class="pf ${pbc(s.memPercent)}" style="width:${Math.min(s.memPercent,100)}%"></div></div><span class="mu" style="font-size:10px">${fmtB(s.memUsage)}</span></div>`:'–';
-    return`<tr><td>${esc((c.names||[]).join(', '))} ${c.isNanoclaw?badge('nanoclaw','p'):''}</td><td class="mono mu" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(c.image)}</td><td>${sbadge(c.state)}</td><td style="min-width:110px">${cpuH}</td><td style="min-width:110px">${memH}</td><td class="mu">${esc(c.status)}</td></tr>`;
-  }).join(''):'<tr><td colspan="6" class="empty">No containers</td></tr>';
-
-  document.getElementById('ag-body').innerHTML=(D.agent_groups||[]).map(g=>{
-    const gW=(D.wirings||[]).filter(w=>w.agent_group_id===g.id),gS=(D.sessions||[]).filter(s=>s.agent_group_id===g.id);
-    return`<tr><td><strong>${esc(g.name)}</strong></td><td class="mono">${esc(g.folder)}</td><td>${badge(g.agent_provider||'claude','b')}</td><td>${gS.length}</td><td class="mu">${gW.map(w=>esc(w.channel_type)+':'+esc(w.platform_id)).join(', ')||'–'}</td></tr>`;
-  }).join('')||'<tr><td colspan="5" class="empty">No agent groups</td></tr>';
 }
 
 // ── system ────────────────────────────────────────────────────────────────────
@@ -835,7 +674,6 @@ function renderSystem(){
     ${brewDetail}
     ${!aptCount&&!aptSec&&!snapCount&&!brewTotal?'<div class="mu" style="font-size:11px;margin-top:4px">✓ All packages up to date</div>':''}`;
 
-
   // OS info
   const osEl=document.getElementById('os-detail');
   if(!os||!Object.keys(os).length){osEl.innerHTML='<div class="mu" style="font-size:12px">Not available</div>';}
@@ -897,114 +735,17 @@ function renderSystem(){
   </tr>`).join('')||'<tr><td colspan="4" class="empty">No images</td></tr>';
 }
 
-// ── sessions ─────────────────────────────────────────────────────────────────
-function renderSessions(){
-  const sess=D.sessions||[];
-  document.getElementById('sess-cnt').textContent=sess.length+' sessions';
-  const now=Date.now();
-  const compact=165000,full=200000;
-
-  document.getElementById('sess-cards').innerHTML=sess.map(s=>{
-    const sd=(D.session_data||[]).find(d=>d.sessionId===s.id);
-    const mm=sd?.msgMetrics;
-    // Match token metrics by agent_group_id
-    const tok=(D.token_metrics?.sessions||[]).find(t=>t.kind==='agent'&&t.agentGroupId===s.agent_group_id)||null;
-
-    // State badge
-    const running=s.container_status==='running';
-    const idle=s.container_status==='idle';
-    const stateBadge=running?badge('running','g'):idle?badge('idle','b'):badge('stopped','x');
-
-    // Timestamps
-    const createdMs=s.created_at?new Date(s.created_at).getTime():null;
-    const lastMsgMs=mm?.lastActivityMs||(s.last_active?new Date(s.last_active).getTime():null);
-    const createdStr=createdMs?new Date(createdMs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'}):'–';
-
-    // Session age
-    let ageStr='–';
-    if(createdMs){
-      const endMs=running?now:(lastMsgMs||now);
-      const ms=endMs-createdMs;
-      const d=Math.floor(ms/86400000),h=Math.floor((ms%86400000)/3600000),m=Math.floor((ms%3600000)/60000);
-      ageStr=d>0?`${d}d ${h}h`:h>0?`${h}h ${m}m`:`${m}m`;
-    }
-
-    // Context bar (from token metrics)
-    let ctxHtml='';
-    if(tok){
-      const pct=Math.min(100,tok.contextPct||0),fill=Math.min(100,tok.contextFill||0);
-      const col=pct>=90?'crit':pct>=70?'warn':'ok';
-      const colVar=col==='crit'?'rd':col==='warn'?'yw':'gn';
-      ctxHtml=`<div style="margin-top:10px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:3px">
-          <span class="mu" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px">Context Window</span>
-          <span style="font-size:11px;font-weight:700;color:var(--${colVar})">${pct}% <span class="mu" style="font-weight:400">von 165k compact / ${fmtTok(tok.contextTokens||0)} tokens</span></span>
-        </div>
-        <div class="pb"><div class="pf ${col}" style="width:${fill}%"></div></div>
-      </div>`;
-    }
-
-    // Token stats row
-    let tokHtml='';
-    if(tok){
-      tokHtml=`<div style="display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:12px">
-        <span class="mu">Out <strong style="color:var(--tx)">${fmtTok(tok.totalOutput||0)}</strong></span>
-        <span class="mu">In <strong style="color:var(--tx)">${fmtTok(tok.totalInput||0)}</strong></span>
-        <span class="mu">Cache Hit <strong style="color:var(--${(tok.cacheHitPct||0)>=60?'gn':(tok.cacheHitPct||0)>=30?'yw':'rd'})">${tok.cacheHitPct||0}%</strong></span>
-        <span class="mu">Turns <strong style="color:var(--tx)">${tok.turns||0}</strong></span>
-        ${tok.lastTs?`<span class="mu">Session aktiv ${rel(tok.lastTs)}</span>`:''}
-      </div>`;
-    }
-
-    // Message stats
-    let msgHtml='–';
-    if(mm){
-      msgHtml=`<span style="color:${mm.today>0?'var(--gn)':'var(--mu)'}"><strong>${mm.today}</strong> heute</span>`
-        +`<span class="mu"> · ${mm.last7d} diese Woche · ${mm.total} gesamt</span>`
-        +(mm.pending>0?` · <span style="color:var(--yw)">${mm.pending} ausstehend</span>`:'')
-        +(mm.medianResponseMs?` · ⌀ ${fmtMs2(mm.medianResponseMs)} Antwortzeit`:'');
-    }
-
-    // Heartbeat
-    const hb=sd?.heartbeatMs;
-    const hbStr=hb?relMs(hb):'–';
-    const hbColor=hb&&(now-hb)<300000?'var(--gn)':hb&&(now-hb)<86400000?'var(--mu)':'var(--rd)';
-
-    return`<div class="sec" style="margin-bottom:12px;padding:14px 16px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;flex-wrap:wrap">
-        <div style="flex:1;min-width:0">
-          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-            <strong style="font-size:14px">${esc(s.agent_group_name||s.agent_group_id)}</strong>
-            ${stateBadge}
-            ${s.channel_type?badge(s.channel_type,'b'):''}
-          </div>
-          <div class="mono mu" style="font-size:10px;margin-top:2px">${esc(s.id||'')}</div>
-        </div>
-        <div style="text-align:right;font-size:12px;flex-shrink:0">
-          <div class="mu">Erstellt <strong style="color:var(--tx)">${createdStr}</strong></div>
-          <div class="mu">Alter <strong style="color:var(--tx)">${ageStr}</strong></div>
-          ${hb?`<div style="color:${hbColor};font-size:11px">Heartbeat ${hbStr}</div>`:''}
-        </div>
-      </div>
-      ${ctxHtml}
-      ${tokHtml}
-      <div style="margin-top:8px;font-size:12px;padding-top:8px;border-top:1px solid var(--bd)">
-        <span class="mu" style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;margin-right:8px">Nachrichten</span>${msgHtml}
-        ${lastMsgMs?`<span class="mu" style="font-size:11px;margin-left:12px">Letzte: ${rel(new Date(lastMsgMs).toISOString())}</span>`:''}
-      </div>
-    </div>`;
-  }).join('')||'<div class="empty">Keine Sessions</div>';
-}
-
-// ── channels ─────────────────────────────────────────────────────────────────
+// ── channels (details tab) ────────────────────────────────────────────────────
 function renderChannels(){
   const mgs=D.messaging_groups||[];
-  if(!mgs.length){document.getElementById('ch-content').innerHTML='<div class="empty">No messaging groups</div>';return;}
+  const el=document.getElementById('ch-content');
+  document.getElementById('ch-cnt').textContent=mgs.length+' total';
+  if(!mgs.length){el.innerHTML='<div class="empty">No messaging groups</div>';return;}
   const byType={};for(const mg of mgs){if(!byType[mg.channel_type])byType[mg.channel_type]=[];byType[mg.channel_type].push(mg);}
-  document.getElementById('ch-content').innerHTML=Object.entries(byType).map(([ct,list])=>`<div class="sec" style="margin-bottom:12px"><div class="sh">${badge(ct,'b')} &nbsp;${esc(ct)} <span class="cnt">${list.length}</span></div><table><thead><tr><th>Platform ID</th><th>Name</th><th>Type</th><th>Unknown Senders</th><th>Agents</th></tr></thead><tbody>${list.map(mg=>{const ws=(D.wirings||[]).filter(w=>w.messaging_group_id===mg.id),pol=mg.unknown_sender_policy||'strict';return`<tr><td class="mono">${esc(mg.platform_id)}</td><td>${esc(mg.name||'–')}</td><td>${mg.is_group?badge('group','b'):badge('DM','x')}</td><td>${badge(pol,pol==='public'?'g':pol==='request_approval'?'y':'x')}</td><td>${ws.map(w=>esc(w.agent_group_name)).join(', ')||'–'}</td></tr>`;}).join('')}</tbody></table></div>`).join('');
+  el.innerHTML=Object.entries(byType).map(([ct,list])=>`<div style="margin-bottom:4px"><div style="padding:8px 14px;font-size:11px;font-weight:600;color:var(--mu);text-transform:uppercase;letter-spacing:.3px">${badge(ct,'b')} &nbsp;${esc(ct)} <span class="cnt">${list.length}</span></div><table><thead><tr><th>Platform ID</th><th>Name</th><th>Type</th><th>Unknown Senders</th><th>Agents</th></tr></thead><tbody>${list.map(mg=>{const ws=(D.wirings||[]).filter(w=>w.messaging_group_id===mg.id),pol=mg.unknown_sender_policy||'strict';return`<tr><td class="mono">${esc(mg.platform_id)}</td><td>${esc(mg.name||'–')}</td><td>${mg.is_group?badge('group','b'):badge('DM','x')}</td><td>${badge(pol,pol==='public'?'g':pol==='request_approval'?'y':'x')}</td><td>${ws.map(w=>esc(w.agent_group_name)).join(', ')||'–'}</td></tr>`;}).join('')}</tbody></table></div>`).join('');
 }
 
-// ── users ─────────────────────────────────────────────────────────────────────
+// ── users (details tab) ───────────────────────────────────────────────────────
 function renderUsers(){
   const users=D.users||[],roles=D.user_roles||[];
   document.getElementById('usr-cnt').textContent=users.length+' total';
@@ -1012,7 +753,19 @@ function renderUsers(){
 }
 
 // ── messages ─────────────────────────────────────────────────────────────────
-function refreshMsgList(){const sel=document.getElementById('sess-sel'),prev=sel.value;sel.innerHTML='<option value="">Select a session…</option>'+(D.session_data||[]).map(s=>`<option value="${esc(s.agentGroupId+'|'+s.sessionId)}">${esc(s.agentGroupId)} / ${esc(s.sessionId)}</option>`).join('');if(prev)sel.value=prev;renderMsgs();}
+function refreshMsgList(){
+  const sel=document.getElementById('sess-sel'),prev=sel.value;
+  sel.innerHTML='<option value="">Session auswählen…</option>'+(D.session_data||[]).map(s=>{
+    const sess=(D.sessions||[]).find(x=>x.id===s.sessionId);
+    const ag=(D.agent_groups||[]).find(x=>x.id===s.agentGroupId);
+    const mg=sess&&(D.messaging_groups||[]).find(x=>x.id===sess.messaging_group_id);
+    const agName=ag?.name||sess?.agent_group_name||s.agentGroupId;
+    const mgLabel=mg?mg.channel_type+(mg.name?' · '+mg.name:mg.platform_id?' · '+mg.platform_id:''):'';
+    const label=agName+(mgLabel?' — '+mgLabel:'');
+    return`<option value="${esc(s.agentGroupId+'|'+s.sessionId)}">${esc(label)}</option>`;
+  }).join('');
+  if(prev)sel.value=prev;renderMsgs();
+}
 function fmtMs2(ms){if(ms===null||ms===undefined)return'–';if(ms<1000)return ms+'ms';if(ms<60000)return(ms/1000).toFixed(1)+'s';return Math.round(ms/60000)+'m';}
 function renderMsgs(){
   const sel=document.getElementById('sess-sel'),el=document.getElementById('msg-content');
@@ -1031,7 +784,7 @@ function renderMsgs(){
     {t:'Avg Response',v:fmtMs2(mm.medianResponseMs)},
   ].map(s=>`<div class="card"><div class="ct">${s.t}</div><div class="cv ${s.c||''}">${s.v}</div></div>`).join('');
 
-  // 24h activity bar chart — byHour is indexed by UTC hour 0-23
+  // 24h activity bar chart
   const maxH=Math.max(1,...(mm.byHour||[]));
   const bars=(mm.byHour||[]).map((cnt,h)=>{
     const hpx=Math.round(cnt/maxH*60);
@@ -1076,15 +829,6 @@ function renderMsgs(){
     </div>
     ${errHtml}`;
 }
-
-// ── logs ──────────────────────────────────────────────────────────────────────
-let logsStarted=false,allLines=[];
-const LEVELS=['debug','info','warn','error','fatal'];
-function levelOf(l){const s=l.toLowerCase();if(s.includes('"fatal"')||s.includes(' fatal '))return'fatal';if(s.includes('"error"')||s.includes(' error '))return'error';if(s.includes('"warn"')||s.includes(' warn '))return'warn';if(s.includes('"debug"')||s.includes(' debug '))return'debug';return'info';}
-function appendLine(line){allLines.push(line);if(allLines.length>3000)allLines=allLines.slice(-3000);const minLvl=document.getElementById('log-lvl').value,lvl=levelOf(line);if(LEVELS.indexOf(lvl)<LEVELS.indexOf(minLvl))return;const el=document.getElementById('logwrap'),d=document.createElement('div');d.className='ll '+lvl;d.textContent=line;el.appendChild(d);while(el.children.length>1500)el.removeChild(el.firstChild);if(document.getElementById('autoscroll').checked)el.scrollTop=el.scrollHeight;}
-function clearLogs(){allLines=[];document.getElementById('logwrap').innerHTML='';}
-document.addEventListener('DOMContentLoaded',()=>{document.getElementById('log-lvl').addEventListener('change',()=>{document.getElementById('logwrap').innerHTML='';allLines.forEach(appendLine);});});
-function startLogs(){logsStarted=true;fetch('/api/logs/history').then(r=>r.json()).then(d=>{(d.lines||[]).forEach(appendLine);}).catch(()=>{});const es=new EventSource('/api/logs/stream');es.onmessage=ev=>{try{JSON.parse(ev.data).forEach(appendLine);}catch{}};es.onopen=()=>{document.getElementById('log-status').textContent='● live';};es.onerror=()=>{document.getElementById('log-status').textContent='○ disconnected';};}
 
 load();setInterval(load,15000);
 </script>
