@@ -29,6 +29,7 @@
 import type Database from 'better-sqlite3';
 import fs from 'fs';
 
+import { CONTAINER_IDLE_CEILING_MS } from './config.js';
 import { ensureEgressNetwork } from './egress-lockdown.js';
 import { getActiveSessions, isTaskThread, updateSession } from './db/sessions.js';
 import { getAgentGroup } from './db/agent-groups.js';
@@ -62,8 +63,9 @@ export function parseSqliteUtc(s: string): number {
 const SWEEP_INTERVAL_MS = 60_000;
 // Absolute idle ceiling for a running container. If the heartbeat file hasn't
 // been touched in this long, the container is either stuck or doing genuinely
-// nothing — kill and restart on the next inbound.
-export const ABSOLUTE_CEILING_MS = 30 * 60 * 1000;
+// nothing — kill and restart on the next inbound. Configurable via the
+// CONTAINER_IDLE_CEILING_MINUTES .env key (default 30 min); see config.ts.
+export const ABSOLUTE_CEILING_MS = CONTAINER_IDLE_CEILING_MS;
 // Stuck tolerance window applied per 'processing' claim — "did we see any
 // signs of life since this message was claimed?"
 export const CLAIM_STUCK_MS = 60 * 1000;

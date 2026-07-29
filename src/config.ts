@@ -16,6 +16,7 @@ const envConfig = readEnvFile([
   'CONTAINER_CPU_LIMIT',
   'CONTAINER_MEMORY_LIMIT',
   'CONTAINER_PIDS_LIMIT',
+  'CONTAINER_IDLE_CEILING_MINUTES',
   'NANOCLAW_EGRESS_LOCKDOWN',
   'NANOCLAW_EGRESS_NETWORK',
   'ONECLI_GATEWAY_CONTAINER',
@@ -86,6 +87,18 @@ export const CONTAINER_MEMORY_LIMIT = process.env.CONTAINER_MEMORY_LIMIT || envC
 // blocks it from spawning subprocesses, and neither is reported as a PID limit.
 // Empty = no cap.
 export const CONTAINER_PIDS_LIMIT = process.env.CONTAINER_PIDS_LIMIT ?? envConfig.CONTAINER_PIDS_LIMIT ?? '2048';
+
+// Idle reaper: how long a container may go without touching its heartbeat file
+// before the host sweep kills it (host-sweep.ts ABSOLUTE_CEILING_MS). A finished
+// turn stops heartbeating, so in practice this is the idle timeout — the wall
+// after which an idle container is reaped and restarted on the next message.
+// Active work keeps heartbeating (every SDK event) and long Bash calls extend
+// the ceiling to their declared timeout, so lowering this only reaps idle
+// containers sooner. Default 30 (minutes) preserves the historical behavior.
+const idleCeilingRaw = process.env.CONTAINER_IDLE_CEILING_MINUTES || envConfig.CONTAINER_IDLE_CEILING_MINUTES;
+const idleCeilingMin = Number(idleCeilingRaw);
+export const CONTAINER_IDLE_CEILING_MS =
+  Number.isFinite(idleCeilingMin) && idleCeilingMin > 0 ? idleCeilingMin * 60 * 1000 : 30 * 60 * 1000;
 
 // Egress lockdown — force all agent traffic through the OneCLI gateway on a
 // no-internet Docker network. Off by default; consumed by src/egress-lockdown.ts.
