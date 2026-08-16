@@ -249,6 +249,16 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
     // Publish the batch's in_reply_to so MCP tools (send_message, send_file)
     // can stamp it on outbound rows — needed for a2a return-path routing.
     setCurrentInReplyTo(routing.inReplyTo);
+    // Forward a loop stop to the ACTIVE query. The stream deliberately stays
+    // open between turns, so the loop can be parked inside processQuery when
+    // config.signal fires; without this, the "stopped" loop's query — and its
+    // 500ms follow-up poller — outlives the stop and keeps polling (and
+    // claiming) messages from whatever inbound DB the process points at. In
+    // tests that leaked one immortal poller per loop-driven test, which could
+    // steal a later test's follow-up message into a dead query.
+    const abortActiveQuery = () => query.abort();
+    if (config.signal?.aborted) abortActiveQuery();
+    else config.signal?.addEventListener('abort', abortActiveQuery, { once: true });
     try {
       const result = await processQuery(
         query,
@@ -292,6 +302,7 @@ export async function runPollLoop(config: PollLoopConfig): Promise<void> {
       log(`Errored batch will be acked completed — ${processingIds.length} message(s), no redelivery`);
     } finally {
       clearCurrentInReplyTo();
+      config.signal?.removeEventListener('abort', abortActiveQuery);
     }
 
     // Ensure completed even if processQuery ended without a result event
@@ -406,6 +417,9 @@ export async function processQuery(
         // host-generated welcome trigger with null thread vs a Discord DM reply).
         const newMessages = pending.filter((m) => m.kind !== 'system');
         if (newMessages.length === 0) return;
+
+        // Accumulated context must not engage a warm query by itself.
+        if (!newMessages.some((m) => m.trigger === 1)) return;
 
         const newIds = newMessages.map((m) => m.id);
         markProcessing(newIds);
