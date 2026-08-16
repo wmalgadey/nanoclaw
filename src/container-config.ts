@@ -30,6 +30,14 @@ export interface AdditionalMountConfig {
   readonly?: boolean;
 }
 
+/**
+ * Host path of the tailscaled control socket, mounted through to containers
+ * whose group opted in. Shared by the mount builder (which skips the mount if
+ * it's absent) and the ncl write path (which warns at enable time rather than
+ * letting the operator discover it from a spawn-time log line).
+ */
+export const TAILSCALE_SOCKET_PATH = '/run/tailscale/tailscaled.sock';
+
 /** Shape of the materialized `container.json` file read by the container runner. */
 export interface ContainerConfig {
   mcpServers: Record<string, McpServerConfig>;
@@ -83,6 +91,9 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     model: row.model ?? undefined,
     effort: row.effort ?? undefined,
     timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
+    // Off stays absent rather than `false`, so container.json for a group that
+    // never opted in reads exactly as it did before the column existed.
+    tailscaleSocket: row.tailscale_socket ? true : undefined,
   };
 }
 

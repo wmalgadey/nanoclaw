@@ -1,5 +1,7 @@
 import { randomUUID } from 'crypto';
+import fs from 'fs';
 
+import { TAILSCALE_SOCKET_PATH } from '../../container-config.js';
 import type { AdditionalMountConfig, McpServerConfig } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer, wakeContainer } from '../../container-runner.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
@@ -53,6 +55,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     additional_mounts: JSON.parse(row.additional_mounts),
     cli_scope: row.cli_scope,
     timezone: row.timezone,
+    tailscale_socket: !!row.tailscale_socket,
     updated_at: row.updated_at,
   };
 }
@@ -496,6 +499,53 @@ registerResource({
         const filtered = existing.filter((m) => !(m.hostPath === hostPath && m.containerPath === containerPath));
         updateContainerConfigJson(id, 'additional_mounts', filtered);
         return { removed: { hostPath, containerPath }, note: `Run \`ncl groups restart --id ${id}\` to apply.` };
+      },
+    },
+    'config enable-tailscale': {
+      access: 'approval',
+      hostOnly: true,
+      description:
+        "Mount the host's tailscaled socket into a group's containers, so the agent's `tailscale` CLI drives the " +
+        'HOST daemon (no auth key, no tailscaled, no NET_ADMIN in the container). OPERATOR-ONLY — mounting a host ' +
+        'path is a filesystem-access boundary, same as `config add-mount`. The group also needs the `tailscale` apt ' +
+        'package (`ncl groups config add-package --apt tailscale`). Requires `ncl groups restart` to take effect. ' +
+        'Use --id <group-id>.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        if (!getContainerConfig(id)) throw new Error(`No container config for group: ${id}`);
+
+        updateContainerConfigScalars(id, { tailscale_socket: 1 });
+
+        // The mount builder skips a missing socket with a spawn-time log line;
+        // surface it here instead, where the operator can act on it.
+        const warning = fs.existsSync(TAILSCALE_SOCKET_PATH)
+          ? undefined
+          : `Host socket ${TAILSCALE_SOCKET_PATH} does not exist — the mount will be skipped at spawn until tailscaled is running.`;
+
+        return {
+          tailscale_socket: true,
+          note: `Run \`ncl groups restart --id ${id}\` for the mount to take effect.`,
+          ...(warning ? { warning } : {}),
+        };
+      },
+    },
+    'config disable-tailscale': {
+      access: 'approval',
+      hostOnly: true,
+      description:
+        "Stop mounting the host's tailscaled socket into a group's containers. OPERATOR-ONLY. Requires " +
+        '`ncl groups restart` to take effect. Use --id <group-id>.',
+      handler: async (args) => {
+        const id = args.id as string;
+        if (!id) throw new Error('--id is required');
+        if (!getContainerConfig(id)) throw new Error(`No container config for group: ${id}`);
+
+        updateContainerConfigScalars(id, { tailscale_socket: 0 });
+        return {
+          tailscale_socket: false,
+          note: `Run \`ncl groups restart --id ${id}\` to apply.`,
+        };
       },
     },
   },

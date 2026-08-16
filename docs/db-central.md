@@ -321,11 +321,14 @@ CREATE TABLE container_configs (
   additional_mounts      TEXT NOT NULL DEFAULT '[]',
   cli_scope              TEXT NOT NULL DEFAULT 'group',   -- disabled | group | global
   timezone               TEXT,                            -- IANA id; NULL = install-global TZ (added by migration 20)
+  tailscale_socket       INTEGER NOT NULL DEFAULT 0,      -- 1 = mount the host tailscaled socket (added by migration 21)
   updated_at             TEXT NOT NULL
 );
 ```
 
 `timezone` overrides the install-global timezone for one agent group: host-side scheduling (cron interpretation, `--process-after`, run-log stamps) resolves it live via `resolveGroupTimezone` (`src/container-config.ts`); the container gets it as its `TZ` env on next respawn. Set via `ncl groups config update --timezone <IANA>` (`""` clears back to NULL) or `ncl groups create --timezone`.
+
+`tailscale_socket` opts one agent group into the Tailscale host-socket passthrough: at spawn, `buildMounts` bind-mounts the host's `/run/tailscale/tailscaled.sock` into the container, so the agent's `tailscale` CLI drives the *host* daemon — no auth key, no `tailscaled`, and no `NET_ADMIN` inside the container. The group still needs the `tailscale` apt package for the CLI itself. Set via `ncl groups config enable-tailscale --id <group>` / `disable-tailscale`; both are `hostOnly` (operator-only, never runnable from inside a container) because mounting a host path is a filesystem-access boundary — the same reasoning as `config add-mount`. A missing host socket is not fatal: the mount is skipped with a warning.
 
 - **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`
 - **Writers:** `src/db/container-configs.ts`, `src/modules/self-mod/apply.ts`, `src/backfill-container-configs.ts`
@@ -430,6 +433,7 @@ Several early migrations were later renamed/retired and replaced by "module" fil
 | 18 | `approvals-approver-user-id` | `018-approvals-approver-user-id.ts` | `pending_approvals.approver_user_id` — names a single required approver for a2a message-gate policies |
 | 19 | `wiring-threads-override` | `019-wiring-threads.ts` | `messaging_group_agents.threads` — per-wiring thread-policy override (NULL = adapter default) |
 | 20 | `container-config-timezone` | `020-container-config-timezone.ts` | `container_configs.timezone` — per-agent-group timezone override (NULL = install-global) |
+| 21 | `container-config-tailscale-socket` | `021-container-config-tailscale-socket.ts` | `container_configs.tailscale_socket` — per-agent-group opt-in for the Tailscale host-socket passthrough (0 = off) |
 
 Numbers 5 and 6 are intentionally absent — migrations were renumbered during early development.
 

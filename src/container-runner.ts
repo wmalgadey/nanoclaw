@@ -23,7 +23,7 @@ import {
   ONECLI_URL,
   TIMEZONE,
 } from './config.js';
-import { materializeContainerJson } from './container-config.js';
+import { materializeContainerJson, TAILSCALE_SOCKET_PATH } from './container-config.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN, hostGatewayArgs, readonlyMountArgs, stopContainer } from './container-runtime.js';
@@ -381,11 +381,10 @@ export function buildMounts(
 
   // Tailscale host-socket passthrough — gives the container access to Tailscale
   // peers via the host daemon without injecting an auth key into the container.
-  const TAILSCALE_SOCKET = '/run/tailscale/tailscaled.sock';
-  if (containerConfig.tailscaleSocket && fs.existsSync(TAILSCALE_SOCKET)) {
-    mounts.push({ hostPath: TAILSCALE_SOCKET, containerPath: TAILSCALE_SOCKET, readonly: false });
+  if (containerConfig.tailscaleSocket && fs.existsSync(TAILSCALE_SOCKET_PATH)) {
+    mounts.push({ hostPath: TAILSCALE_SOCKET_PATH, containerPath: TAILSCALE_SOCKET_PATH, readonly: false });
   } else if (containerConfig.tailscaleSocket) {
-    log.warn('tailscaleSocket requested but host socket not found — skipping', { path: TAILSCALE_SOCKET });
+    log.warn('tailscaleSocket requested but host socket not found — skipping', { path: TAILSCALE_SOCKET_PATH });
   }
 
   return mounts;

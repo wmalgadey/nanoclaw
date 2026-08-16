@@ -55,3 +55,33 @@ describe('resolveGroupTimezone', () => {
     expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).timezone).toBeUndefined();
   });
 });
+
+/**
+ * The Tailscale host-socket opt-in. `buildMounts` has always honored
+ * `tailscaleSocket`, but before migration 021 there was no column behind it —
+ * the flag could never become true, so the mount was never added. These pin the
+ * column → flag path that closed that gap, and the default-off shape.
+ */
+describe('tailscaleSocket', () => {
+  beforeEach(() => {
+    runMigrations(initTestDb());
+    createAgentGroup(GROUP);
+    ensureContainerConfig(GROUP.id);
+  });
+  afterEach(() => {
+    closeDb();
+  });
+
+  it('defaults off, and stays absent from container.json rather than false', () => {
+    expect(getContainerConfig(GROUP.id)!.tailscale_socket).toBe(0);
+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBeUndefined();
+  });
+
+  it('round-trips the opt-in through the DB into the materialized config', () => {
+    updateContainerConfigScalars(GROUP.id, { tailscale_socket: 1 });
+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBe(true);
+
+    updateContainerConfigScalars(GROUP.id, { tailscale_socket: 0 });
+    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBeUndefined();
+  });
+});

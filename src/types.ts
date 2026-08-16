@@ -26,6 +26,13 @@ export interface ContainerConfigRow {
   additional_mounts: string; // JSON: AdditionalMountConfig[]
   cli_scope: string; // 'disabled' | 'group' | 'global'
   timezone: string | null; // IANA id; NULL = follow the install-global timezone
+  /**
+   * 1 = mount the host's tailscaled socket into this group's containers.
+   * Column is NOT NULL DEFAULT 0 (migration 021); optional on the TS type per
+   * the denied_at convention so fixtures that build ContainerConfigRow objects
+   * don't need updating — createContainerConfig leaves it to the DB default.
+   */
+  tailscale_socket?: number;
   updated_at: string;
 }
 
