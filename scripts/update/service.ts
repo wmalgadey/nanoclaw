@@ -16,6 +16,11 @@ export function createCommandRunner(): CommandRunner {
       cwd,
       encoding: 'utf8',
       stdio: ['ignore', 'pipe', 'pipe'],
+      // Node defaults maxBuffer to 1 MiB and turns an overflow into ENOBUFS,
+      // which surfaces as a validation failure indistinguishable from a real
+      // build/test break. A full `vitest run` over this suite clears 1 MiB of
+      // stdout on its own, so give the pipe room the output actually needs.
+      maxBuffer: 256 * 1024 * 1024,
     }).trim();
   return {
     run,
