@@ -87,11 +87,12 @@ function extractText(message: OutboundMessage): string | null {
 }
 
 /** Resolve a display name for an inbound sender: known identity, then the
- *  nanoclaw user registry, then a short pubkey. */
-function resolveSenderName(config: BuzzConfigFile, pubkey: string): string {
+ *  nanoclaw user registry, then a short pubkey. Async since central DB reads
+ *  go through the DbDriver seam. */
+async function resolveSenderName(config: BuzzConfigFile, pubkey: string): Promise<string> {
   const identity = config.identities.find((i) => i.pubkey === pubkey);
   if (identity) return identity.displayName;
-  const user = getUser(`${PLATFORM_PREFIX}${pubkey}`);
+  const user = await getUser(`${PLATFORM_PREFIX}${pubkey}`);
   if (user?.display_name) return user.display_name;
   return pubkey.slice(0, 8);
 }
@@ -143,17 +144,25 @@ function makeBuzzAdapter(
           seen.add(event.id);
 
           const uuid = extractChannelId(event) ?? channelId;
-          hostConfig.onInbound(`${PLATFORM_PREFIX}${uuid}`, null, {
-            id: event.id,
-            kind: 'chat',
-            timestamp: new Date(event.created_at * 1000).toISOString(),
-            content: {
-              text: event.content,
-              sender: resolveSenderName(config, event.pubkey),
-              senderId: `${PLATFORM_PREFIX}${event.pubkey}`,
-            },
-            isMention: true,
-            isGroup: true,
+          // Sender resolution hits the central DB, which is async behind
+          // DbDriver. The relay client's callback is sync and ignores a
+          // returned promise, so dispatch in a detached task and log its
+          // failure here rather than surfacing an unhandled rejection.
+          void (async () => {
+            hostConfig.onInbound(`${PLATFORM_PREFIX}${uuid}`, null, {
+              id: event.id,
+              kind: 'chat',
+              timestamp: new Date(event.created_at * 1000).toISOString(),
+              content: {
+                text: event.content,
+                sender: await resolveSenderName(config, event.pubkey),
+                senderId: `${PLATFORM_PREFIX}${event.pubkey}`,
+              },
+              isMention: true,
+              isGroup: true,
+            });
+          })().catch((err) => {
+            log.error('Buzz inbound dispatch failed', { eventId: event.id, error: String(err) });
           });
         });
       }

@@ -82,31 +82,31 @@ describe('resolveGroupTimezone', () => {
 
 /**
  * The Tailscale host-socket opt-in. `buildMounts` has always honored
- * `tailscaleSocket`, but before migration 021 there was no column behind it —
+ * `tailscaleSocket`, but before migration 024 there was no column behind it —
  * the flag could never become true, so the mount was never added. These pin the
  * column → flag path that closed that gap, and the default-off shape.
  */
 describe('tailscaleSocket', () => {
-  beforeEach(() => {
-    runMigrations(initTestDb());
-    createAgentGroup(GROUP);
-    ensureContainerConfig(GROUP.id);
+  beforeEach(async () => {
+    await runMigrations(await initTestDb());
+    await createAgentGroup(GROUP);
+    await ensureContainerConfig(GROUP.id);
   });
-  afterEach(() => {
-    closeDb();
-  });
-
-  it('defaults off, and stays absent from container.json rather than false', () => {
-    expect(getContainerConfig(GROUP.id)!.tailscale_socket).toBe(0);
-    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBeUndefined();
+  afterEach(async () => {
+    await closeDb();
   });
 
-  it('round-trips the opt-in through the DB into the materialized config', () => {
-    updateContainerConfigScalars(GROUP.id, { tailscale_socket: 1 });
-    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBe(true);
+  it('defaults off, and stays absent from container.json rather than false', async () => {
+    expect((await getContainerConfig(GROUP.id))!.tailscale_socket).toBe(0);
+    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).tailscaleSocket).toBeUndefined();
+  });
 
-    updateContainerConfigScalars(GROUP.id, { tailscale_socket: 0 });
-    expect(configFromDb(getContainerConfig(GROUP.id)!, GROUP).tailscaleSocket).toBeUndefined();
+  it('round-trips the opt-in through the DB into the materialized config', async () => {
+    await updateContainerConfigScalars(GROUP.id, { tailscale_socket: 1 });
+    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).tailscaleSocket).toBe(true);
+
+    await updateContainerConfigScalars(GROUP.id, { tailscale_socket: 0 });
+    expect(configFromDb((await getContainerConfig(GROUP.id))!, GROUP).tailscaleSocket).toBeUndefined();
   });
 });
 
