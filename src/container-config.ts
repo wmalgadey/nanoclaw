@@ -264,6 +264,8 @@ export interface ContainerConfig {
   model?: string;
   effort?: string;
   timezone?: string;
+  /** Session isolation tier for the group's containers; absent = the composer's default ('container'). */
+  runtimeTier?: 'container' | 'vm';
 }
 
 /**
@@ -272,8 +274,8 @@ export interface ContainerConfig {
  * flip scheduling to UTC — an invalid override falls back to the global tz,
  * same as no override.
  */
-export function resolveGroupTimezone(agentGroupId: string): string {
-  const tz = getContainerConfig(agentGroupId)?.timezone;
+export async function resolveGroupTimezone(agentGroupId: string): Promise<string> {
+  const tz = (await getContainerConfig(agentGroupId))?.timezone;
   return tz && isValidTimezone(tz) ? tz : TIMEZONE;
 }
 
@@ -325,6 +327,20 @@ export function sanitizeStoredMcpServers(raw: unknown, groupName: string): Recor
   return servers;
 }
 
+/**
+ * runtime_tier is an isolation control: dropping an unknown stored value would
+ * silently compose the group at the default tier — a weaker boundary than the
+ * one the value asked for. Fail closed instead: the group refuses to compose
+ * until the stored value is fixed. (A *declared* tier the driver cannot
+ * realize is refused separately by validateSpec, against the driver's
+ * capabilities.)
+ */
+function parseRuntimeTier(raw: string | null | undefined, groupName: string): 'container' | 'vm' | undefined {
+  if (raw == null) return undefined;
+  if (raw === 'container' || raw === 'vm') return raw;
+  throw new Error(`agent group "${groupName}" has invalid runtime_tier "${raw}" — expected "container" or "vm"`);
+}
+
 /** Build a `ContainerConfig` from a DB row + agent group identity. */
 export function configFromDb(row: ContainerConfigRow, group: AgentGroup): ContainerConfig {
   return {
@@ -347,19 +363,20 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     // Off stays absent rather than `false`, so container.json for a group that
     // never opted in reads exactly as it did before the column existed.
     tailscaleSocket: row.tailscale_socket ? true : undefined,
+    runtimeTier: parseRuntimeTier(row.runtime_tier, group.name),
   };
 }
 
 /**
  * Materialize `container.json` from the DB. Called at spawn time so the
  * container always sees fresh config. Returns the `ContainerConfig` for
- * use by the caller (buildMounts, buildContainerArgs, etc.).
+ * use by the caller (buildMounts, composeSessionSpec, etc.).
  */
-export function materializeContainerJson(agentGroupId: string): ContainerConfig {
-  const group = getAgentGroup(agentGroupId);
+export async function materializeContainerJson(agentGroupId: string): Promise<ContainerConfig> {
+  const group = await getAgentGroup(agentGroupId);
   if (!group) throw new Error(`Agent group not found: ${agentGroupId}`);
 
-  const row = getContainerConfig(agentGroupId);
+  const row = await getContainerConfig(agentGroupId);
   if (!row) throw new Error(`Container config not found for agent group: ${agentGroupId}`);
 
   const config = configFromDb(row, group);
