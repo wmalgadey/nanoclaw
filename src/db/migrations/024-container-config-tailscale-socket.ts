@@ -23,7 +23,7 @@ import type { Migration } from './index.js';
 export const migration024: Migration = {
   version: 24,
   name: 'container-config-tailscale-socket',
-  up(db) {
-    db.exec(`ALTER TABLE container_configs ADD COLUMN tailscale_socket INTEGER NOT NULL DEFAULT 0;`);
+  async up(db) {
+    await db.exec(`ALTER TABLE container_configs ADD COLUMN tailscale_socket INTEGER NOT NULL DEFAULT 0;`);
   },
 };
