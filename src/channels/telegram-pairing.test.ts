@@ -167,7 +167,7 @@ describe('waitForPairing', () => {
     const r = await createPairing('main');
     const p = waitForPairing(r.code, { pollMs: 50 });
     setTimeout(() => {
-      tryConsume({ text: `@b ${r.code}`, botUsername: 'b', platformId: 'tg:1', isGroup: true, name: 'Group' });
+      void tryConsume({ text: `@b ${r.code}`, botUsername: 'b', platformId: 'tg:1', isGroup: true, name: 'Group' });
     }, 100);
     const consumed = await p;
     expect(consumed.status).toBe('consumed');
@@ -178,7 +178,7 @@ describe('waitForPairing', () => {
     const r = await createPairing('main');
     const waiter = waitForPairing(r.code, { pollMs: 30 });
     setTimeout(() => {
-      tryConsume({ text: '000000', botUsername: 'b', platformId: 'tg:1', isGroup: false });
+      void tryConsume({ text: '000000', botUsername: 'b', platformId: 'tg:1', isGroup: false });
     }, 60);
     await expect(waiter).rejects.toThrow(/invalidated/);
   });
@@ -217,7 +217,7 @@ describe('attempt tracking', () => {
       onAttempt: (a) => attempts.push(a.candidate),
     });
     setTimeout(() => {
-      tryConsume({ text: '999999', botUsername: 'b', platformId: 'tg:1', isGroup: false });
+      void tryConsume({ text: '999999', botUsername: 'b', platformId: 'tg:1', isGroup: false });
     }, 60);
     await expect(waiter).rejects.toThrow(/invalidated by wrong code \(999999\)/);
     expect(attempts).toEqual(['999999']);
@@ -232,7 +232,7 @@ describe('attempt tracking', () => {
       onAttempt: (a) => attempts.push(a.candidate),
     });
     setTimeout(() => {
-      tryConsume({ text: r.code, botUsername: 'b', platformId: 'tg:1', isGroup: false });
+      void tryConsume({ text: r.code, botUsername: 'b', platformId: 'tg:1', isGroup: false });
     }, 60);
     const consumed = await waiter;
     expect(consumed.status).toBe('consumed');

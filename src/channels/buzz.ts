@@ -149,7 +149,7 @@ function makeBuzzAdapter(
           // returned promise, so dispatch in a detached task and log its
           // failure here rather than surfacing an unhandled rejection.
           void (async () => {
-            hostConfig.onInbound(`${PLATFORM_PREFIX}${uuid}`, null, {
+            await hostConfig.onInbound(`${PLATFORM_PREFIX}${uuid}`, null, {
               id: event.id,
               kind: 'chat',
               timestamp: new Date(event.created_at * 1000).toISOString(),

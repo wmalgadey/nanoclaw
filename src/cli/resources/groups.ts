@@ -619,9 +619,9 @@ registerResource({
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
-        if (!getContainerConfig(id)) throw new Error(`No container config for group: ${id}`);
+        if (!(await getContainerConfig(id))) throw new Error(`No container config for group: ${id}`);
 
-        updateContainerConfigScalars(id, { tailscale_socket: 1 });
+        await updateContainerConfigScalars(id, { tailscale_socket: 1 });
 
         // The mount builder skips a missing socket with a spawn-time log line;
         // surface it here instead, where the operator can act on it.
@@ -645,9 +645,9 @@ registerResource({
       handler: async (args) => {
         const id = args.id as string;
         if (!id) throw new Error('--id is required');
-        if (!getContainerConfig(id)) throw new Error(`No container config for group: ${id}`);
+        if (!(await getContainerConfig(id))) throw new Error(`No container config for group: ${id}`);
 
-        updateContainerConfigScalars(id, { tailscale_socket: 0 });
+        await updateContainerConfigScalars(id, { tailscale_socket: 0 });
         return {
           tailscale_socket: false,
           note: `Run \`ncl groups restart --id ${id}\` to apply.`,
