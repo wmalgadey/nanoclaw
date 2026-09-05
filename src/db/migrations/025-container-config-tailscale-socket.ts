@@ -20,8 +20,8 @@ import type { Migration } from './index.js';
  * (`ncl groups config enable-tailscale`) is hostOnly — operator-only, never
  * reachable from inside a container, same as `config add-mount`.
  */
-export const migration024: Migration = {
-  version: 24,
+export const migration025: Migration = {
+  version: 25,
   name: 'container-config-tailscale-socket',
   async up(db) {
     await db.exec(`ALTER TABLE container_configs ADD COLUMN tailscale_socket INTEGER NOT NULL DEFAULT 0;`);

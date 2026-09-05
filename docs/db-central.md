@@ -336,7 +336,7 @@ CREATE TABLE container_configs (
 
 `tailscale_socket` opts one agent group into the Tailscale host-socket passthrough: at spawn, `buildMounts` bind-mounts the host's `/run/tailscale/tailscaled.sock` into the container, so the agent's `tailscale` CLI drives the *host* daemon — no auth key, no `tailscaled`, and no `NET_ADMIN` inside the container. The group still needs the `tailscale` apt package for the CLI itself. Set via `ncl groups config enable-tailscale --id <group>` / `disable-tailscale`; both are `hostOnly` (operator-only, never runnable from inside a container) because mounting a host path is a filesystem-access boundary — the same reasoning as `config add-mount`. A missing host socket is not fatal: the mount is skipped with a warning.
 
-- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/claude-md-compose.ts`
+- **Readers:** `src/container-config.ts`, `src/container-runner.ts`, `src/cli/dispatch.ts` (scope enforcement), `src/project-doc-compose.ts`
 - **Writers:** `src/db/container-configs.ts`, `src/modules/self-mod/apply.ts`, `src/backfill-container-configs.ts`
 
 ### 1.16 `pending_sender_approvals`
