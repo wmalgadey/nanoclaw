@@ -1,0 +1,12 @@
+{
+  "relayUrl": "ws://buzz.example.ts.net",
+  "identities": [
+    {
+      "instance": "buzz-marvin",
+      "envKey": "BUZZ_NSEC_MARVIN",
+      "displayName": "Marvin",
+      "pubkey": "<64-hex-pubkey>",
+      "channels": ["<channel-uuid>"]
+    }
+  ]
+}
