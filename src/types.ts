@@ -42,6 +42,14 @@ export interface ContainerConfigRow {
    * and `SELECT *` rows surface it here. Absent means the default tier.
    */
   runtime_tier?: string | null;
+  /**
+   * 1 = mount the host's tailscaled socket into this group's containers.
+   * Column is NOT NULL DEFAULT 0 (module:tailscale:container-config-socket);
+   * optional on the TS type per the denied_at convention so fixtures that
+   * build ContainerConfigRow objects don't need updating —
+   * createContainerConfig leaves it to the DB default.
+   */
+  tailscale_socket?: number;
   updated_at: string;
 }
 

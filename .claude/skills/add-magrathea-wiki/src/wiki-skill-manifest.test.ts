@@ -10,10 +10,7 @@ import { describe, expect, it } from 'vitest';
  * nothing else goes red when it disappears — which is exactly what a reset to
  * upstream does to it.
  */
-const PAYLOAD = path.join(
-  process.cwd(),
-  '.claude/skills/add-magrathea-wiki/container-skills/wiki/SKILL.md',
-);
+const PAYLOAD = path.join(process.cwd(), '.claude/skills/add-magrathea-wiki/container-skills/wiki/SKILL.md');
 const INSTALLED = path.join(process.cwd(), 'container', 'skills', 'wiki', 'SKILL.md');
 
 describe('magrathea wiki container skill', () => {

@@ -9,6 +9,7 @@ import {
 } from '../../container-config.js';
 import { buildAgentGroupImage, killContainer } from '../../container-runner.js';
 import { requestWake } from '../../request-wake.js';
+import { tailscaleVerbs } from '../../tailscale.js';
 import { restartAgentGroupContainers } from '../../container-restart.js';
 import { createAgentGroup, getAgentGroupByFolder } from '../../db/agent-groups.js';
 import { getDb, hasTable } from '../../db/connection.js';
@@ -87,6 +88,7 @@ function presentConfig(row: ContainerConfigRow): Record<string, unknown> {
     additional_mounts: JSON.parse(row.additional_mounts),
     cli_scope: row.cli_scope,
     timezone: row.timezone,
+    tailscale_socket: !!row.tailscale_socket,
     updated_at: row.updated_at,
   };
 }
@@ -633,5 +635,6 @@ registerResource({
         return { removed: { hostPath, containerPath }, note: `Run \`ncl groups restart --id ${id}\` to apply.` };
       },
     },
+    ...tailscaleVerbs,
   },
 });

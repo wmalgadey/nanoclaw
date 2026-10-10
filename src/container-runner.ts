@@ -25,6 +25,7 @@ import {
   TIMEZONE,
 } from './config.js';
 import { CONTAINER_PLUGINS_DIR, materializeContainerJson } from './container-config.js';
+import { tailscaleAptRepo, tailscaleMounts } from './tailscale.js';
 import { getContainerConfig } from './db/container-configs.js';
 import { updateContainerConfigScalars } from './db/container-configs.js';
 import { CONTAINER_RUNTIME_BIN } from './container-runtime.js';
@@ -1014,6 +1015,10 @@ export async function buildMounts(
     mounts.push(...providerContribution.mounts.map((m) => ({ ...m, mountClass: 'allowlisted-extra' as const, scope })));
   }
 
+  // Tailscale host-socket passthrough — gives the container access to Tailscale
+  // peers via the host daemon without injecting an auth key into the container.
+  mounts.push(...tailscaleMounts(containerConfig));
+
   return mounts;
 }
 
@@ -1275,6 +1280,8 @@ export async function buildAgentGroupImage(agentGroupId: string): Promise<void> 
 
   let dockerfile = `FROM ${CONTAINER_IMAGE}\nUSER root\n`;
   if (aptPackages.length > 0) {
+    // Packages Debian's own repos don't carry need their repo added first.
+    dockerfile += tailscaleAptRepo(aptPackages);
     dockerfile += `RUN apt-get update && apt-get install -y ${aptPackages.join(' ')} && rm -rf /var/lib/apt/lists/*\n`;
   }
   if (npmPackages.length > 0) {

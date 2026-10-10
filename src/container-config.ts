@@ -259,6 +259,12 @@ export interface ContainerConfig {
   timezone?: string;
   /** Session isolation tier for the group's containers; absent = the composer's default ('container'). */
   runtimeTier?: 'container' | 'vm';
+  /**
+   * Mount the host's tailscaled socket into the container, so the agent's
+   * `tailscale` CLI drives the host daemon without needing its own auth key.
+   * Consumed by `tailscaleMounts` in `src/tailscale.ts`.
+   */
+  tailscaleSocket?: boolean;
 }
 
 /**
@@ -383,6 +389,7 @@ export function configFromDb(row: ContainerConfigRow, group: AgentGroup): Contai
     ...speedFields(parseContainerSpeed(row.speed) ?? (FAST_MODE ? 'fast' : undefined)),
     timezone: row.timezone && isValidTimezone(row.timezone) ? row.timezone : undefined,
     runtimeTier: parseRuntimeTier(row.runtime_tier, group.name),
+    tailscaleSocket: row.tailscale_socket ? true : undefined,
   };
 }
 

@@ -58,7 +58,9 @@ the paragraph above true, because `detectInstalledSkills` reads those barrels. I
 is also why an upstream rebase touches the reach-in files: resolve those the way
 the paragraph above says. A branch holding only the skills would rebase cleanly
 but would strand the install, and the first `/update-skills` on it would refresh
-nothing. Done knowingly, on 2026-09-10.
+nothing. Decided on 2026-09-10; the applied state was actually committed on
+2026-10-10 — until then this paragraph described an intent, and the install
+lived only in an uncommitted working tree.
 
 ## Rebuilding from scratch
 
