@@ -44,7 +44,7 @@ import './buzz.js';
 Pinned to exact versions — the supply-chain policy rejects ranges and `latest`:
 
 ```nc:dep
-ws@8.21.1
+ws@8.21.3
 nostr-tools@2.24.0
 ```
 
